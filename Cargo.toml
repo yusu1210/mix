@@ -1,0 +1,64 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/mix-core",
+  "crates/mix-server",
+  "crates/mix-cli",
+  "crates/mix-release",
+  "apps/macos/src-tauri",
+]
+# Release verification is an explicit publishing concern. Keep it in the
+# workspace for locked, reproducible release commands, but do not compile it
+# during ordinary product development builds.
+default-members = [
+  "crates/mix-core",
+  "crates/mix-server",
+  "crates/mix-cli",
+  "apps/macos/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.2"
+edition = "2021"
+rust-version = "1.98"
+license = "MIT"
+authors = ["mix contributors"]
+publish = false
+
+[workspace.dependencies]
+axum = { version = "0.8.8", features = ["http1", "json", "query", "tokio"] }
+base64 = "0.22.1"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
+clap = { version = "4.6.1", features = ["derive"] }
+dirs = "6.0.0"
+fs2 = "0.4.3"
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
+libc = "0.2.189"
+parking_lot = "0.12.5"
+reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "native-tls", "system-proxy"] }
+rusqlite = { version = "0.40.2", default-features = false, features = ["backup"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+semver = "1.0.27"
+sha2 = "0.10.9"
+tempfile = "3.27.0"
+tar = "0.4.46"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync"] }
+toml = "1.1.4"
+tower-http = { version = "0.6.11", features = ["cors", "fs", "set-header"] }
+uuid = { version = "1.26.0", features = ["serde", "v4"] }
+url = "2.5.8"
+walkdir = "2.5.0"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+
+# Dependency debug information dominates local `target` size while providing
+# little value when debugging Mix itself. Keep Mix crates debuggable, but do
+# not persist symbols for third-party crates in the development cache.
+[profile.dev.package."*"]
+debug = 0

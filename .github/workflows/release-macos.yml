@@ -1,0 +1,396 @@
+name: Release macOS App and CLI
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/macos/package-lock.json
+      - name: Build pinned release tooling
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          cargo +1.98.0 build --locked --release --package mix-release
+      - name: Audit locked dependencies
+        run: |
+          cargo +1.98.0 install cargo-audit --version 0.22.2 --locked
+          cargo +1.98.0 audit --file Cargo.lock
+          npm ci --prefix apps/macos
+          npm audit --prefix apps/macos --audit-level=high
+      - id: version
+        name: Verify release metadata
+        shell: bash
+        run: |
+          version=$(target/release/mix-release meta version)
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            target/release/mix-release meta check-tag "$GITHUB_REF_NAME"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Verify public dependency sources
+        run: target/release/mix-release sbom source-check
+
+  macos:
+    needs: preflight
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            machine: arm64
+            artifact_arch: aarch64
+            target_triple: aarch64-apple-darwin
+          - runner: macos-15-intel
+            machine: x86_64
+            artifact_arch: x86_64
+            target_triple: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      MIX_TOOL_ROOT: ${{ github.workspace }}/.tools
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/macos/package-lock.json
+      - run: npm ci
+        working-directory: apps/macos
+      - run: sh scripts/bootstrap-rust.sh
+        working-directory: apps/macos
+      - name: Build release tooling
+        run: >-
+          RUSTUP_HOME="$GITHUB_WORKSPACE/.tools/rustup"
+          CARGO_HOME="$GITHUB_WORKSPACE/.tools/cargo"
+          RUSTUP_TOOLCHAIN=1.98.0
+          "$GITHUB_WORKSPACE/.tools/cargo/bin/cargo"
+          build --locked --release --package mix-release
+      - name: Require Apple release credentials
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MIX_UPDATER_PUBLIC_KEY: ${{ vars.MIX_UPDATER_PUBLIC_KEY }}
+          MIX_UPDATER_SIGNING_PUBLIC_KEY: ${{ vars.MIX_UPDATER_SIGNING_PUBLIC_KEY || vars.MIX_UPDATER_PUBLIC_KEY }}
+          MIX_UPDATER_ROTATION_BRIDGE_VERSION: ${{ vars.MIX_UPDATER_ROTATION_BRIDGE_VERSION }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_INSTALLER_CERTIFICATE APPLE_INSTALLER_CERTIFICATE_PASSWORD APPLE_KEYCHAIN_PASSWORD APPLE_SIGNING_IDENTITY APPLE_INSTALLER_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID MIX_UPDATER_PUBLIC_KEY MIX_UPDATER_SIGNING_PUBLIC_KEY TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "missing required release value: $name" >&2
+              exit 2
+            fi
+          done
+          target/release/mix-release updater keys \
+            --version "${{ needs.preflight.outputs.version }}" \
+            --embedded-public-key "$MIX_UPDATER_PUBLIC_KEY" \
+            --signing-public-key "$MIX_UPDATER_SIGNING_PUBLIC_KEY" \
+            --bridge-version "$MIX_UPDATER_ROTATION_BRIDGE_VERSION"
+      - name: Import Developer ID certificate
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+        run: |
+          certificate_path="$RUNNER_TEMP/mix-developer-id.p12"
+          installer_certificate_path="$RUNNER_TEMP/mix-developer-id-installer.p12"
+          keychain_path="$RUNNER_TEMP/mix-signing.keychain-db"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate_path"
+          printf '%s' "$APPLE_INSTALLER_CERTIFICATE" | base64 --decode > "$installer_certificate_path"
+          security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security import "$installer_certificate_path" -P "$APPLE_INSTALLER_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -k "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security list-keychain -d user -s "$keychain_path"
+          security find-identity -v -p codesigning "$keychain_path"
+          security find-identity -v "$keychain_path" | grep -F -- "$APPLE_INSTALLER_SIGNING_IDENTITY"
+      - name: Build Developer ID app and DMG
+        working-directory: apps/macos
+        env:
+          MIX_BUILD_ARCH: ${{ matrix.machine }}
+          MIX_CODESIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          MIX_UPDATER_ENABLED: "1"
+          MIX_UPDATER_PUBKEY: ${{ vars.MIX_UPDATER_PUBLIC_KEY }}
+          MIX_UPDATE_ENDPOINT: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+          MIX_RELEASE_PAGE_URL: https://github.com/${{ github.repository }}/releases/latest
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run build:desktop
+      - name: Notarize and staple application
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          app="target/release/bundle/macos/mix.app"
+          notary_zip="$RUNNER_TEMP/mix-${{ matrix.artifact_arch }}-notary.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$notary_zip"
+          xcrun notarytool submit "$notary_zip" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+      - name: Build signed updater archive from notarized application
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          mkdir -p release-artifacts
+          sh apps/macos/scripts/build-macos-updater.sh \
+            target/release/bundle/macos/mix.app \
+            "release-artifacts/mix_${{ needs.preflight.outputs.version }}_${{ matrix.artifact_arch }}.app.tar.gz"
+          target/release/mix-release archive create \
+            --input target/release/bundle/macos/mix.app \
+            --output "$RUNNER_TEMP/mix-app-repro.tar.gz"
+          cmp \
+            "release-artifacts/mix_${{ needs.preflight.outputs.version }}_${{ matrix.artifact_arch }}.app.tar.gz" \
+            "$RUNNER_TEMP/mix-app-repro.tar.gz"
+      - name: Build, notarize, and package the CLI with Local Web
+        shell: bash
+        env:
+          RUSTUP_HOME: ${{ github.workspace }}/.tools/rustup
+          CARGO_HOME: ${{ github.workspace }}/.tools/cargo
+          RUSTUP_TOOLCHAIN: 1.98.0
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          sh apps/macos/scripts/build-cli.sh "${{ matrix.target_triple }}"
+          cli="target/${{ matrix.target_triple }}/release/mix"
+          bundle="target/${{ matrix.target_triple }}/release/bundle/macos/mix-cli.app"
+          sh apps/macos/scripts/build-cli-bundle.sh \
+            "$cli" apps/macos/dist "$bundle" "${{ needs.preflight.outputs.version }}"
+          notary_zip="$RUNNER_TEMP/mix-cli-${{ matrix.artifact_arch }}-notary.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$bundle" "$notary_zip"
+          xcrun notarytool submit "$notary_zip" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$bundle"
+          xcrun stapler validate "$bundle"
+          mkdir -p release-artifacts
+          package="release-artifacts/mix_${{ needs.preflight.outputs.version }}_cli_${{ matrix.artifact_arch }}.pkg"
+          sh apps/macos/scripts/build-cli-installer.sh \
+            "$bundle" "$package" "${{ needs.preflight.outputs.version }}"
+          xcrun notarytool submit "$package" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$package"
+          xcrun stapler validate "$package"
+      - name: Rebuild, sign, notarize, and staple DMG
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          app="target/release/bundle/macos/mix.app"
+          dmg="target/release/bundle/dmg/mix_${{ needs.preflight.outputs.version }}_${{ matrix.artifact_arch }}.dmg"
+          sh apps/macos/scripts/build-dmg.sh "$app" "$dmg" mix
+          codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
+          xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+      - name: Verify public-release artifact
+        run: >-
+          sh scripts/verify-macos-artifact.sh
+          "target/release/bundle/dmg/mix_${{ needs.preflight.outputs.version }}_${{ matrix.artifact_arch }}.dmg"
+          "${{ matrix.machine }}"
+          release
+      - name: Verify signed CLI installer and Local Web resources
+        shell: bash
+        run: |
+          package="release-artifacts/mix_${{ needs.preflight.outputs.version }}_cli_${{ matrix.artifact_arch }}.pkg"
+          sh scripts/verify-macos-cli-installer.sh \
+            "$package" "${{ matrix.machine }}" release "${{ needs.preflight.outputs.version }}"
+      - name: Verify signed updater artifact
+        env:
+          MIX_UPDATER_PUBKEY: ${{ vars.MIX_UPDATER_SIGNING_PUBLIC_KEY || vars.MIX_UPDATER_PUBLIC_KEY }}
+        run: >-
+          sh scripts/verify-macos-update-artifact.sh
+          "release-artifacts/mix_${{ needs.preflight.outputs.version }}_${{ matrix.artifact_arch }}.app.tar.gz"
+          "release-artifacts/mix_${{ needs.preflight.outputs.version }}_${{ matrix.artifact_arch }}.app.tar.gz.sig"
+          "${{ matrix.machine }}"
+          release
+      - name: Stage DMG
+        shell: bash
+        run: |
+          mkdir -p release-artifacts
+          cp "target/release/bundle/dmg/mix_${{ needs.preflight.outputs.version }}_${{ matrix.artifact_arch }}.dmg" release-artifacts/
+          cp "apps/macos/src-tauri/resources/THIRD-PARTY-LICENSES.html" \
+            "release-artifacts/mix_${{ needs.preflight.outputs.version }}_macos_${{ matrix.artifact_arch }}.licenses.html"
+      - name: Generate artifact-bound CycloneDX SBOM
+        shell: bash
+        run: |
+          RUSTUP_HOME="$GITHUB_WORKSPACE/.tools/rustup" \
+            CARGO_HOME="$GITHUB_WORKSPACE/.tools/cargo" \
+            RUSTUP_TOOLCHAIN=1.98.0 \
+            "$GITHUB_WORKSPACE/.tools/cargo/bin/cargo" metadata \
+              --locked --format-version 1 \
+              --filter-platform "${{ matrix.target_triple }}" \
+              --manifest-path apps/macos/src-tauri/Cargo.toml \
+              > "$RUNNER_TEMP/cargo-metadata.json"
+          RUSTUP_HOME="$GITHUB_WORKSPACE/.tools/rustup" \
+            CARGO_HOME="$GITHUB_WORKSPACE/.tools/cargo" \
+            RUSTUP_TOOLCHAIN=1.98.0 \
+            "$GITHUB_WORKSPACE/.tools/cargo/bin/cargo" tree --locked \
+              --target "${{ matrix.target_triple }}" \
+              --manifest-path apps/macos/src-tauri/Cargo.toml \
+              --edges normal,build --prefix depth --format '{p}' \
+              > "$RUNNER_TEMP/cargo-tree.txt"
+          target/release/mix-release sbom generate \
+            --target macos \
+            --arch "${{ matrix.artifact_arch }}" \
+            --cargo-metadata "$RUNNER_TEMP/cargo-metadata.json" \
+            --cargo-tree "$RUNNER_TEMP/cargo-tree.txt" \
+            --artifact "release-artifacts/mix_${{ needs.preflight.outputs.version }}_${{ matrix.artifact_arch }}.dmg" \
+            --output "release-artifacts/mix_${{ needs.preflight.outputs.version }}_macos_${{ matrix.artifact_arch }}.cdx.json"
+          RUSTUP_HOME="$GITHUB_WORKSPACE/.tools/rustup" \
+            CARGO_HOME="$GITHUB_WORKSPACE/.tools/cargo" \
+            RUSTUP_TOOLCHAIN=1.98.0 \
+            "$GITHUB_WORKSPACE/.tools/cargo/bin/cargo" metadata \
+              --locked --format-version 1 \
+              --filter-platform "${{ matrix.target_triple }}" \
+              --manifest-path crates/mix-cli/Cargo.toml \
+              > "$RUNNER_TEMP/mix-cli-cargo-metadata.json"
+          RUSTUP_HOME="$GITHUB_WORKSPACE/.tools/rustup" \
+            CARGO_HOME="$GITHUB_WORKSPACE/.tools/cargo" \
+            RUSTUP_TOOLCHAIN=1.98.0 \
+            "$GITHUB_WORKSPACE/.tools/cargo/bin/cargo" tree --locked \
+              --target "${{ matrix.target_triple }}" \
+              --manifest-path crates/mix-cli/Cargo.toml \
+              --edges normal,build --prefix depth --format '{p}' \
+              > "$RUNNER_TEMP/mix-cli-cargo-tree.txt"
+          target/release/mix-release sbom generate \
+            --target cli \
+            --arch "${{ matrix.artifact_arch }}" \
+            --cargo-metadata "$RUNNER_TEMP/mix-cli-cargo-metadata.json" \
+            --cargo-tree "$RUNNER_TEMP/mix-cli-cargo-tree.txt" \
+            --artifact "release-artifacts/mix_${{ needs.preflight.outputs.version }}_cli_${{ matrix.artifact_arch }}.pkg" \
+            --output "release-artifacts/mix_${{ needs.preflight.outputs.version }}_cli_${{ matrix.artifact_arch }}.cdx.json"
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: release-artifacts/*
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: mix-macos-${{ matrix.artifact_arch }}
+          path: release-artifacts/*
+          if-no-files-found: error
+
+  draft:
+    name: Assemble verified draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [preflight, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Build pinned release tooling
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          cargo +1.98.0 build --locked --release --package mix-release
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: mix-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: Generate and verify signed update manifest
+        shell: bash
+        env:
+          MIX_UPDATER_SIGNING_PUBLIC_KEY: ${{ vars.MIX_UPDATER_SIGNING_PUBLIC_KEY || vars.MIX_UPDATER_PUBLIC_KEY }}
+        run: |
+          target/release/mix-release updater manifest \
+            --version "${{ needs.preflight.outputs.version }}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$GITHUB_REF_NAME" \
+            --artifacts release-artifacts \
+            --public-key "$MIX_UPDATER_SIGNING_PUBLIC_KEY" \
+            --output release-artifacts/latest.json
+          target/release/mix-release updater verify \
+            --version "${{ needs.preflight.outputs.version }}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$GITHUB_REF_NAME" \
+            --public-key "$MIX_UPDATER_SIGNING_PUBLIC_KEY" \
+            release-artifacts/latest.json
+      - name: Verify SBOMs and generate third-party notices
+        shell: bash
+        run: |
+          version="${{ needs.preflight.outputs.version }}"
+          for arch in aarch64 x86_64; do
+            target/release/mix-release sbom verify \
+              --artifact "release-artifacts/mix_${version}_${arch}.dmg" \
+              "release-artifacts/mix_${version}_macos_${arch}.cdx.json"
+            target/release/mix-release sbom verify \
+              --artifact "release-artifacts/mix_${version}_cli_${arch}.pkg" \
+              "release-artifacts/mix_${version}_cli_${arch}.cdx.json"
+            done
+          target/release/mix-release sbom notices \
+            "release-artifacts/mix_${version}_macos_aarch64.cdx.json" \
+            "release-artifacts/mix_${version}_macos_x86_64.cdx.json" \
+            "release-artifacts/mix_${version}_cli_aarch64.cdx.json" \
+            "release-artifacts/mix_${version}_cli_x86_64.cdx.json" \
+            --output release-artifacts/THIRD-PARTY-NOTICES.md
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd release-artifacts
+          checksums="$RUNNER_TEMP/Mix-SHA256SUMS"
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' \
+            | LC_ALL=C sort -z \
+            | xargs -0 -r sha256sum > "$checksums"
+          test -s "$checksums"
+          mv "$checksums" SHA256SUMS
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            release-artifacts/latest.json
+            release-artifacts/SHA256SUMS
+            release-artifacts/THIRD-PARTY-NOTICES.md
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          release-artifacts/*
+          --repo "$GITHUB_REPOSITORY"
+          --verify-tag
+          --generate-notes
+          --draft
+          --title "Mix ${{ needs.preflight.outputs.version }}"

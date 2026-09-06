@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="surface" x1="120" y1="96" x2="900" y2="940" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#302E2A"/>
+      <stop offset="1" stop-color="#171715"/>
+    </linearGradient>
+    <linearGradient id="coral" x1="236" y1="290" x2="650" y2="760" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF9A78"/>
+      <stop offset="1" stop-color="#E46648"/>
+    </linearGradient>
+    <linearGradient id="mint" x1="790" y1="264" x2="430" y2="760" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A9E3C4"/>
+      <stop offset="1" stop-color="#58AF86"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="28" stdDeviation="32" flood-color="#000" flood-opacity=".32"/>
+    </filter>
+  </defs>
+  <rect x="52" y="52" width="920" height="920" rx="220" fill="url(#surface)"/>
+  <path d="M245 720V350c0-48 39-87 87-87 29 0 57 15 73 40l107 166-93 143-87-135v243c0 43-35 78-78 78h-9V720Z" fill="url(#coral)" filter="url(#shadow)"/>
+  <path d="M779 720V350c0-48-39-87-87-87-29 0-57 15-73 40L405 635a79 79 0 0 0 23 109 79 79 0 0 0 109-24l155-243v243c0 43 35 78 78 78h9V720Z" fill="url(#mint)" filter="url(#shadow)"/>
+  <path d="m512 469 70 108-45 70a79 79 0 0 1-109 24 80 80 0 0 1-23-24l107-178Z" fill="#F3EEE3" fill-opacity=".94"/>
+  <rect x="52" y="52" width="920" height="920" rx="220" fill="none" stroke="#FFF" stroke-opacity=".08" stroke-width="4"/>
+</svg>

@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-ui:
+    name: React UI
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/macos
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/macos/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm audit --audit-level=high
+
+  rust-security:
+    name: Rust dependency audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: rustup toolchain install 1.98.0 --profile minimal
+      - run: cargo +1.98.0 install cargo-audit --version 0.22.2 --locked
+      - run: cargo +1.98.0 audit --file Cargo.lock
+
+  rust:
+    name: Rust ${{ matrix.machine }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      MIX_TOOL_ROOT: ${{ github.workspace }}/.tools
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            machine: arm64
+          - runner: macos-15-intel
+            machine: x86_64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/macos/package-lock.json
+      - run: npm ci
+        working-directory: apps/macos
+      - run: sh scripts/bootstrap-rust.sh
+        working-directory: apps/macos
+        env:
+          MIX_BUILD_ARCH: ${{ matrix.machine }}
+      - name: Rust format
+        run: >-
+          RUSTUP_HOME="$GITHUB_WORKSPACE/.tools/rustup"
+          CARGO_HOME="$GITHUB_WORKSPACE/.tools/cargo"
+          RUSTUP_TOOLCHAIN=1.98.0
+          "$GITHUB_WORKSPACE/.tools/cargo/bin/cargo"
+          fmt --all -- --check
+      - name: Rust tests
+        run: >-
+          RUSTUP_HOME="$GITHUB_WORKSPACE/.tools/rustup"
+          CARGO_HOME="$GITHUB_WORKSPACE/.tools/cargo"
+          RUSTUP_TOOLCHAIN=1.98.0
+          "$GITHUB_WORKSPACE/.tools/cargo/bin/cargo"
+          test --workspace --all-targets --locked
+      - name: Rust lints
+        run: >-
+          RUSTUP_HOME="$GITHUB_WORKSPACE/.tools/rustup"
+          CARGO_HOME="$GITHUB_WORKSPACE/.tools/cargo"
+          RUSTUP_TOOLCHAIN=1.98.0
+          "$GITHUB_WORKSPACE/.tools/cargo/bin/cargo"
+          clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: npm test
+        working-directory: apps/macos
+      - name: Build and verify local macOS artifacts
+        shell: bash
+        env:
+          MIX_BUILD_ARCH: ${{ matrix.machine }}
+        run: |
+          npm run build:desktop --prefix apps/macos
+          case "${{ matrix.machine }}" in
+            arm64) target=aarch64-apple-darwin; artifact_arch=aarch64 ;;
+            x86_64) target=x86_64-apple-darwin; artifact_arch=x86_64 ;;
+            *) exit 2 ;;
+          esac
+          cargo="$GITHUB_WORKSPACE/.tools/cargo/bin/cargo"
+          export RUSTUP_HOME="$GITHUB_WORKSPACE/.tools/rustup"
+          export CARGO_HOME="$GITHUB_WORKSPACE/.tools/cargo"
+          export RUSTUP_TOOLCHAIN=1.98.0
+          sh apps/macos/scripts/build-cli.sh "$target"
+          "$cargo" build --release --locked --package mix-release
+          version=$(target/release/mix-release meta version)
+          cli="target/$target/release/mix"
+          bundle="target/$target/release/bundle/macos/mix-cli.app"
+          sh apps/macos/scripts/build-cli-bundle.sh "$cli" apps/macos/dist "$bundle" "$version"
+          package="$RUNNER_TEMP/mix_${version}_cli_${artifact_arch}.pkg"
+          sh apps/macos/scripts/build-cli-installer.sh "$bundle" "$package" "$version"
+          sh scripts/verify-macos-cli-installer.sh "$package" "${{ matrix.machine }}" local "$version"
+          sh scripts/verify-macos-artifact.sh \
+            "target/release/bundle/dmg/mix_${version}_${artifact_arch}.dmg" \
+            "${{ matrix.machine }}" local

@@ -1,0 +1,65 @@
+#!/bin/sh
+set -eu
+
+TARGET_VOLUME=${3:-/}
+if [ "$TARGET_VOLUME" != / ]; then
+  echo "Mix CLI can only be installed on the current macOS startup volume." >&2
+  exit 1
+fi
+ROOT=${TARGET_VOLUME%/}
+for RELATIVE_PATH in \
+  usr \
+  usr/local \
+  usr/local/bin \
+  Library \
+  "Library/Application Support" \
+  "Library/Application Support/Mix"; do
+  PATH_TO_CHECK="$ROOT/$RELATIVE_PATH"
+  if [ -L "$PATH_TO_CHECK" ]; then
+    echo "Cannot install Mix CLI through a symbolic-link directory: $PATH_TO_CHECK" >&2
+    exit 1
+  fi
+  if [ -e "$PATH_TO_CHECK" ] && [ ! -d "$PATH_TO_CHECK" ]; then
+    echo "Cannot install Mix CLI: $PATH_TO_CHECK is not a regular directory." >&2
+    exit 1
+  fi
+done
+
+APP_PATH="$ROOT/Library/Application Support/Mix/mix-cli.app"
+if [ -L "$APP_PATH" ] || { [ -e "$APP_PATH" ] && [ ! -d "$APP_PATH" ]; }; then
+  echo "Cannot install Mix CLI: $APP_PATH is not a regular application directory." >&2
+  exit 1
+fi
+if [ -d "$APP_PATH" ]; then
+  BUNDLE_IDENTIFIER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)
+  if [ "$BUNDLE_IDENTIFIER" != dev.mix.cli ]; then
+    echo "Cannot install Mix CLI: $APP_PATH is not owned by Mix." >&2
+    exit 1
+  fi
+fi
+
+UNINSTALLER_PATH="$ROOT/Library/Application Support/Mix/uninstall-cli"
+if [ -L "$UNINSTALLER_PATH" ] || { [ -e "$UNINSTALLER_PATH" ] && [ ! -f "$UNINSTALLER_PATH" ]; }; then
+  echo "Cannot install Mix CLI: $UNINSTALLER_PATH is not a regular file." >&2
+  exit 1
+fi
+if [ -f "$UNINSTALLER_PATH" ] && [ ! -d "$APP_PATH" ]; then
+  echo "Cannot install Mix CLI: $UNINSTALLER_PATH is not associated with an installed Mix CLI application." >&2
+  exit 1
+fi
+
+COMMAND_PATH="$ROOT/usr/local/bin/mix"
+EXPECTED_TARGET="/Library/Application Support/Mix/mix-cli.app/Contents/MacOS/mix"
+
+if [ -L "$COMMAND_PATH" ]; then
+  CURRENT_TARGET=$(/usr/bin/readlink "$COMMAND_PATH")
+  if [ "$CURRENT_TARGET" != "$EXPECTED_TARGET" ]; then
+    echo "Cannot install Mix CLI: $COMMAND_PATH points to another command." >&2
+    exit 1
+  fi
+elif [ -e "$COMMAND_PATH" ]; then
+  echo "Cannot install Mix CLI: $COMMAND_PATH already exists and is not managed by Mix." >&2
+  exit 1
+fi
+
+exit 0

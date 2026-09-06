@@ -1,0 +1,215 @@
+name: Publish accepted release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft release tag (vX.Y.Z)
+        required: true
+        type: string
+      evidence_reference:
+        description: Commit-addressed raw GitHub URL for the reviewed acceptance evidence
+        required: true
+        type: string
+      evidence_sha256:
+        description: SHA-256 of the exact reviewed evidence file (64 lowercase hex)
+        required: true
+        type: string
+      codex_oauth_api_key_provider_matrix:
+        description: Real Codex OAuth, expiry, API key, and provider matrix passed
+        required: true
+        default: false
+        type: boolean
+      codex_account_switch_history_rollback:
+        description: Real Codex account switch, native history, and rollback passed
+        required: true
+        default: false
+        type: boolean
+      claude_auth_and_native_resume:
+        description: Real Claude authentication and native resume passed
+        required: true
+        default: false
+        type: boolean
+      macos_aarch64_clean_install_uninstall:
+        description: Apple Silicon clean install, launch, and uninstall passed
+        required: true
+        default: false
+        type: boolean
+      macos_x86_64_clean_install_uninstall:
+        description: Intel clean install, launch, and uninstall passed
+        required: true
+        default: false
+        type: boolean
+      signed_update_and_failure_recovery:
+        description: Check-only prompt and manual notarized-DMG upgrade matrix passed
+        required: true
+        default: false
+        type: boolean
+      voiceover_keyboard_responsive_ui:
+        description: VoiceOver, keyboard, and supported window-size review passed
+        required: true
+        default: false
+        type: boolean
+      privacy_security_support_signoff:
+        description: Privacy, security, licensing, and support sign-off passed
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Verify acceptance and publish
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/macos/package-lock.json
+      - name: Build pinned release tooling
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          cargo +1.98.0 build --locked --release --package mix-release
+      - name: Reaudit locked dependencies
+        run: |
+          cargo +1.98.0 install cargo-audit --version 0.22.2 --locked
+          cargo +1.98.0 audit --file Cargo.lock
+          npm ci --prefix apps/macos
+          npm audit --prefix apps/macos --audit-level=high
+      - id: release
+        name: Verify immutable release identity
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          version=$(target/release/mix-release meta version)
+          target/release/mix-release meta check-tag "$RELEASE_TAG"
+          git tag --points-at HEAD | grep -Fqx "$RELEASE_TAG"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - id: draft
+        name: Require the existing release to remain a draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          release=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,url)
+          jq -r '.isDraft' <<<"$release" | grep -Fqx true
+          echo "url=$(jq -r '.url' <<<"$release")" >> "$GITHUB_OUTPUT"
+      - name: Download the verified draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          mkdir release-artifacts
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release-artifacts
+      - name: Reverify exact assets, checksums, updater manifest, and SBOMs
+        shell: bash
+        env:
+          MIX_UPDATER_SIGNING_PUBLIC_KEY: ${{ vars.MIX_UPDATER_SIGNING_PUBLIC_KEY || vars.MIX_UPDATER_PUBLIC_KEY }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          acceptance=()
+          if [[ -f release-artifacts/RELEASE-ACCEPTANCE.json ]]; then
+            acceptance=(--accepted)
+          fi
+          target/release/mix-release readiness verify \
+            --version "$VERSION" --artifacts release-artifacts "${acceptance[@]}"
+          target/release/mix-release updater verify \
+            --version "$VERSION" \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --public-key "$MIX_UPDATER_SIGNING_PUBLIC_KEY" \
+            release-artifacts/latest.json
+          for arch in aarch64 x86_64; do
+            target/release/mix-release sbom verify \
+              --artifact "release-artifacts/mix_${VERSION}_${arch}.dmg" \
+              "release-artifacts/mix_${VERSION}_macos_${arch}.cdx.json"
+            target/release/mix-release sbom verify \
+              --artifact "release-artifacts/mix_${VERSION}_cli_${arch}.pkg" \
+              "release-artifacts/mix_${VERSION}_cli_${arch}.cdx.json"
+          done
+      - name: Bind manual acceptance to the exact release assets
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          EVIDENCE_REFERENCE: ${{ inputs.evidence_reference }}
+          EVIDENCE_SHA256: ${{ inputs.evidence_sha256 }}
+          DRAFT_RELEASE_URL: ${{ steps.draft.outputs.url }}
+          GH_TOKEN: ${{ github.token }}
+          CODEX_AUTH: ${{ inputs.codex_oauth_api_key_provider_matrix }}
+          CODEX_CONTINUITY: ${{ inputs.codex_account_switch_history_rollback }}
+          CLAUDE_AUTH: ${{ inputs.claude_auth_and_native_resume }}
+          ARM64_INSTALL: ${{ inputs.macos_aarch64_clean_install_uninstall }}
+          X86_INSTALL: ${{ inputs.macos_x86_64_clean_install_uninstall }}
+          UPDATE_RECOVERY: ${{ inputs.signed_update_and_failure_recovery }}
+          ACCESSIBILITY: ${{ inputs.voiceover_keyboard_responsive_ui }}
+          OPERATIONS: ${{ inputs.privacy_security_support_signoff }}
+        run: |
+          evidence="$RUNNER_TEMP/mix-release-acceptance-evidence.md"
+          evidence_location=$(target/release/mix-release readiness evidence-location \
+            --repository "$GITHUB_REPOSITORY" "$EVIDENCE_REFERENCE")
+          evidence_commit=$(jq -er '.commit' <<<"$evidence_location")
+          evidence_path=$(jq -er '.path' <<<"$evidence_location")
+          evidence_api="repos/${GITHUB_REPOSITORY}/contents/${evidence_path}"
+          evidence_size=$(gh api --method GET "$evidence_api" -f "ref=$evidence_commit" --jq '.size')
+          if ! [[ "$evidence_size" =~ ^[0-9]+$ ]] || (( evidence_size == 0 || evidence_size > 2097152 )); then
+            echo "acceptance evidence must be non-empty and no larger than 2 MiB" >&2
+            exit 2
+          fi
+          gh api --method GET "$evidence_api" -f "ref=$evidence_commit" \
+            --header "Accept: application/vnd.github.raw+json" > "$evidence"
+          test "$(wc -c < "$evidence")" -eq "$evidence_size"
+          target/release/mix-release readiness record \
+            --version "$VERSION" \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --artifacts release-artifacts \
+            --approver "$GITHUB_ACTOR" \
+            --workflow-run "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --evidence-reference "$EVIDENCE_REFERENCE" \
+            --evidence-sha256 "$EVIDENCE_SHA256" \
+            --evidence-file "$evidence" \
+            --draft-release-url "$DRAFT_RELEASE_URL" \
+            --check "codex_oauth_api_key_provider_matrix=$CODEX_AUTH" \
+            --check "codex_account_switch_history_rollback=$CODEX_CONTINUITY" \
+            --check "claude_auth_and_native_resume=$CLAUDE_AUTH" \
+            --check "macos_aarch64_clean_install_uninstall=$ARM64_INSTALL" \
+            --check "macos_x86_64_clean_install_uninstall=$X86_INSTALL" \
+            --check "signed_update_and_failure_recovery=$UPDATE_RECOVERY" \
+            --check "voiceover_keyboard_responsive_ui=$ACCESSIBILITY" \
+            --check "privacy_security_support_signoff=$OPERATIONS"
+          target/release/mix-release readiness verify \
+            --version "$VERSION" --artifacts release-artifacts --accepted
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: release-artifacts/RELEASE-ACCEPTANCE.json
+      - name: Attach acceptance evidence and publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            release-artifacts/RELEASE-ACCEPTANCE.json \
+            --clobber --repo "$GITHUB_REPOSITORY"
+          gh release edit "$RELEASE_TAG" \
+            --draft=false --latest --repo "$GITHUB_REPOSITORY"

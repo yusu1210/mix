@@ -1,0 +1,36 @@
+# License policy for the Rust dependency graph included in Mix for macOS.
+# cargo-about must fail the release when a dependency cannot be resolved to
+# one of these reviewed, redistributable licenses.
+accepted = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "MPL-2.0",
+  "CC0-1.0",
+  "0BSD",
+  "MIT-0",
+  "Unlicense",
+  "OpenSSL",
+]
+
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+]
+
+ignore-build-dependencies = false
+ignore-dev-dependencies = true
+ignore-transitive-dependencies = false
+private = { ignore = true }
+
+workarounds = [
+  "cocoa",
+  "ring",
+  "rustix",
+  "rustls",
+]

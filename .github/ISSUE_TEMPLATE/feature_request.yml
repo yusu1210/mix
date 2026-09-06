@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a focused improvement to Mix.
+title: "[Feature]: "
+labels: []
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What real workflow is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the result, not only a proposed implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Relevant client, platform, frequency, and current workaround. Do not include secrets or transcript content.
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Product boundaries
+      options:
+        - label: This request does not require Mix to upload credentials or conversation bodies.
+          required: true

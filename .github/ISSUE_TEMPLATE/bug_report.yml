@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a reproducible Mix defect without including secrets or transcripts.
+title: "[Bug]: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For vulnerabilities, follow SECURITY.md instead of opening a public issue. Remove credentials, account identifiers, private Provider URLs, local usernames, paths, prompts, and transcript content.
+  - type: input
+    id: mix_version
+    attributes:
+      label: Mix version
+      placeholder: 0.1.2
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Mac App
+        - CLI
+        - Local Web
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: macOS and architecture
+      placeholder: macOS 15.6, Apple Silicon
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: Client and version
+      description: Include Codex or Claude Code and its version when relevant.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: Describe the smallest repeatable sequence.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Optional output from Mix diagnostics. Review it before posting.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed secrets, identity details, private URLs, local paths, prompts, and transcript content.
+          required: true

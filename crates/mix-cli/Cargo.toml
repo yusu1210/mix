@@ -1,0 +1,24 @@
+[package]
+name = "mix-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Command-line interface for Mix"
+
+[[bin]]
+name = "mix"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+mix-core = { path = "../mix-core" }
+mix-server = { path = "../mix-server" }
+serde_json.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

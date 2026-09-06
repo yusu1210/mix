@@ -1,0 +1,24 @@
+[package]
+name = "mix-release"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Private release validation tooling for Mix"
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+chrono.workspace = true
+clap.workspace = true
+flate2.workspace = true
+serde_json.workspace = true
+semver.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tar.workspace = true
+toml.workspace = true
+url.workspace = true
+uuid = { workspace = true, features = ["v5"] }
+walkdir.workspace = true

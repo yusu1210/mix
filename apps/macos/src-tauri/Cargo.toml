@@ -1,0 +1,33 @@
+[package]
+name = "mix-macos"
+version.workspace = true
+description = "macOS desktop shell for Mix"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "mix_macos_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.4.1", features = [] }
+
+[dependencies]
+tauri = { version = "2.8.1", default-features = false, features = ["image-png", "tray-icon", "wry"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = { version = "2", default-features = false }
+tauri-plugin-clipboard-manager = "2.3.2"
+tauri-plugin-updater = { version = "=2.11.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
+mix-core = { path = "../../../crates/mix-core" }
+mix-server = { path = "../../../crates/mix-server" }
+serde.workspace = true
+tokio = { workspace = true }
+uuid.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+base64 = "0.22"
+minisign-verify = "0.2.5"
