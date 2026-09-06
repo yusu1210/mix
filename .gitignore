@@ -1,0 +1,15 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.build/
+.tools/
+build/
+dist/
+release-artifacts/
+reports/
+apps/macos/node_modules/
+apps/macos/dist/
+apps/macos/src-tauri/resources/THIRD-PARTY-LICENSES.html
+apps/macos/src-tauri/target/
+/target/

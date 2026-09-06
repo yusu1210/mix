@@ -1,0 +1,4 @@
+[build]
+# Keep Cargo's disposable compilation cache out of the repository. Release
+# artifacts are copied into .build/local-artifacts by the packaging scripts.
+target-dir = "/tmp/mix-target"

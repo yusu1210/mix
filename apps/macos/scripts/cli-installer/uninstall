@@ -1,0 +1,38 @@
+#!/bin/sh
+set -eu
+
+APP_PATH="/Library/Application Support/Mix/mix-cli.app"
+UNINSTALLER_PATH="/Library/Application Support/Mix/uninstall-cli"
+INSTALL_DIRECTORY="/Library/Application Support/Mix"
+COMMAND_PATH="/usr/local/bin/mix"
+EXPECTED_TARGET="/Library/Application Support/Mix/mix-cli.app/Contents/MacOS/mix"
+
+if [ "$(/usr/bin/id -u)" -ne 0 ]; then
+  echo "Run this uninstaller with sudo." >&2
+  exit 1
+fi
+if [ ! -L "$COMMAND_PATH" ] || [ "$(/usr/bin/readlink "$COMMAND_PATH")" != "$EXPECTED_TARGET" ]; then
+  echo "Refusing to remove $COMMAND_PATH because it is not the Mix-managed command link." >&2
+  exit 1
+fi
+if [ -L "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+  echo "Refusing to remove $APP_PATH because it is not the installed Mix CLI application." >&2
+  exit 1
+fi
+BUNDLE_IDENTIFIER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)
+if [ "$BUNDLE_IDENTIFIER" != dev.mix.cli ]; then
+  echo "Refusing to remove $APP_PATH because its bundle identifier is not dev.mix.cli." >&2
+  exit 1
+fi
+if [ -L "$UNINSTALLER_PATH" ] || [ ! -f "$UNINSTALLER_PATH" ]; then
+  echo "Refusing to remove Mix CLI because its installed uninstaller is not a regular file." >&2
+  exit 1
+fi
+
+/bin/rm "$COMMAND_PATH"
+/bin/rm -R "$APP_PATH"
+/usr/sbin/pkgutil --forget dev.mix.cli.pkg >/dev/null 2>&1 || true
+/bin/rm "$UNINSTALLER_PATH"
+/bin/rmdir "$INSTALL_DIRECTORY" 2>/dev/null || true
+
+printf '%s\n' "Mix CLI was removed. Mix data and native Codex/Claude history were kept."

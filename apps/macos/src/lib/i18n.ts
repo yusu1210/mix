@@ -1,0 +1,991 @@
+import type { Language } from "./types";
+
+const zh = {
+  switchRevertedByClientError:
+    "客户端未能以目标账号或环境稳定运行。本次操作未完成，Mix 已恢复切换前状态；会话正文、ID 和位置未被移动或改写。",
+  switchRolledBackWithReason: "{summary} 原因：{reason}",
+  switchRolledBackToProfile: "{summary} 当前已恢复为“{profile}”。",
+  switchRolledBackCleanupPending:
+    "切换前账号和配置已恢复，但临时恢复数据尚未清理。请先在活动与恢复中完成清理。",
+  credentialTooLargeError:
+    "登录凭证超过 2 MiB 安全上限。Mix 没有写入截断数据，请检查客户端登录文件是否异常。",
+  resourceConflictError:
+    "该账号、环境或客户端当前仍在使用或已被项目绑定。请先解除关联或选择替代项，再重试。",
+  savedAccountsAndEnvironments: "已添加的账号与环境",
+  profileMixCount: "{accounts} 个账号 · {environments} 个环境",
+  accountIdentity: "账号",
+  productSubtitle: "AI 编程环境管理器",
+  localOnly: "数据仅在本机",
+  close: "关闭",
+  healthy: "运行正常",
+  attention: "需要处理",
+  workspaces: "项目",
+  environments: "账号",
+  sessions: "会话",
+  activity: "活动与恢复",
+  settings: "设置",
+  searchActions: "搜索与快捷操作",
+  ready: "可运行",
+  warning: "需检查",
+  setupRequired: "待配置",
+  signedOut: "已退出登录",
+  chooseSavedAccount: "选择下方已保存账号即可重新登录",
+  open: "打开",
+  addWorkspace: "添加项目",
+  addClient: "连接客户端",
+  addProfile: "添加账号",
+  switchEnvironment: "切换环境",
+  switchingAccount: "正在切换…",
+  activeAccount: "当前账号",
+  activeEnvironment: "当前环境",
+  workspaceAccountDifferent:
+    "当前项目仍使用“{profile}”；全局切换不会改变项目绑定。",
+  nativeHistoryKept: "原生目录保留",
+  switchCompleted: "切换完成；会话正文未被移动或改写",
+  switchCompletedAndClientOpened:
+    "切换完成，已重新打开客户端；原生会话仍保留",
+  clientOpened: "已打开客户端；当前账号和原生历史未改变",
+  operationCompletedWithWarning: "操作已生效，但需要处理",
+  officialAccount: "官方账号",
+  customProvider: "第三方 Provider",
+  historyContinuityLabel: "原生历史连续",
+  historyContinuityDetail:
+    "Mix 不拥有会话数据库或会话正文；Codex 跨 Provider 切换时只更新原生 Provider 元数据并可回滚，会话页只在本机限量读取原生元数据和标题。",
+  unsupportedAccountProfileDetail:
+    "该旧条目没有可验证账号身份，不能安全切换。请重新添加真实账号后移除此条目。",
+  enabled: "已开启",
+  codexFileAuthReady: "Codex 文件登录已就绪",
+  codexFileAuthRequired:
+    'Codex 当前使用 {storage} 凭证。为避免切错账号，Mix 不会读取可能过期的 auth.json。请先将 cli_auth_credentials_store 设为 "file"，并在 Codex 中重新登录一次。',
+  codexSignInRequired:
+    "尚未检测到 Codex 文件登录。请先在 Codex 中登录，再添加当前账号。",
+  codexSignedOutSavedReady:
+    "Codex 当前已退出登录。可直接选择下方已保存账号重新登录，无需先在 Codex 中手动登录。",
+  codexInvalidConfig:
+    "Codex config.toml 无法解析；修复配置后才能安全添加或切换账号。",
+  codexInvalidAuth:
+    "Codex 登录文件无法识别或已损坏；为避免误切账号，请在 Codex 中重新登录后再试。",
+  codexIdentityUnavailable:
+    "Codex 登录文件缺少可验证的账号标识；Mix 无法安全区分账号，请在 Codex 中重新登录后再试。",
+  codexAccountSwitchUnsupported: "该客户端当前不支持由 Mix 托管账号切换。",
+  projectNotOpenedAfterSwitch: "账号已切换，但项目尚未打开：{reason}",
+  recheckAccountStatus: "重新检查",
+  clientStillRunningError:
+    "客户端仍在运行，Mix 已停止操作且没有改写任何文件。请关闭客户端后重试。",
+  switchRolledBackError:
+    "切换未完成，Mix 已自动恢复切换前的账号、配置和 Provider 元数据；会话正文、ID 和位置未被改写。",
+  switchRecoveryRequiredError:
+    "检测到尚未恢复的中断切换。请保持客户端关闭，并先在活动与恢复中恢复切换前状态。",
+  switchRecoveryIncompleteError:
+    "自动恢复未能完整完成。请保持客户端关闭、保留备份，并复制脱敏诊断以获取支持。",
+  activeAccountUnmanagedError:
+    "Codex 当前登录尚未添加到 Mix。为避免覆盖未知账号，请先添加当前账号再切换。",
+  credentialStoreUnavailableError:
+    "Mix 无法访问本地凭证目录，因此没有保存或替换任何登录凭证。请检查 ~/.mix 的权限后重试。",
+  configurationInvalidError:
+    "Mix 配置无法安全读取。请打开健康中心查看损坏字段；修复前不会执行切换。",
+  accountCredentialInvalidError:
+    "此账号保存的登录凭证无效或不完整。请安全修复后再继续。",
+  sessionContextChangedError:
+    "项目、账号或会话来源已发生变化。Mix 未启动会话，请刷新后重新确认。",
+  resourceNotFoundError: "目标账号、项目或会话已不存在。请刷新页面后重试。",
+  invalidOperationError: "请求无效或当前状态不允许此操作。请刷新后重试。",
+  switchToAccount: "切换到此账号",
+  addCurrentAccount: "添加当前账号",
+  addCurrentAccountDetail:
+    "从本机当前登录自动识别账号并安全添加；不会复制会话。",
+  accountAddCurrentFirst: "请先在客户端中完成登录，再返回添加当前账号。",
+  accountAdded: "账号已添加",
+  healthTitle: "有 {count} 个客户端需要检查",
+  healthDetail: "问题已按客户端归类；只有阻塞切换的项目才会在操作时要求处理。",
+  issueCount: "{count} 项检查结果",
+  interruptedSwitchTitle: "检测到中断的账号切换",
+  interruptedSwitchDetail:
+    "上次切换在完成前中断。Mix 已保留切换前备份；恢复完成前请保持客户端关闭，不要再次切换。",
+  interruptedSwitchInvalidDetail:
+    "恢复记录已损坏或客户端环境发生变化。请保持客户端关闭、不要删除备份，并复制脱敏诊断以获取支持。",
+  interruptedSwitchScope: "待恢复：{from} → {to}",
+  recoverPreviousState: "恢复切换前状态",
+  recoveringPreviousState: "正在安全恢复",
+  recoveryUnavailable: "需要人工处理",
+  interruptedSwitchRecovered: "已恢复到切换前状态；原生历史和凭据均已复原",
+  transactionCleanupDetail:
+    "账号切换已经生效，Mix 正在等待清理旧备份和临时凭据。不会回滚已完成的切换。",
+  cleanupTransaction: "清理已完成切换",
+  transactionCleanupCompleted: "已清理切换备份；当前账号保持不变",
+  profiles: "账号",
+  workspaceTitle: "项目",
+  workspaceDetail:
+    "选择项目后，Mix 会使用绑定的 Codex 账号或 Claude Code 隔离环境打开客户端；任务执行和会话记录仍留在原生客户端。",
+  searchWorkspace: "搜索项目或会话",
+  all: "全部",
+  current: "当前",
+  missing: "路径丢失",
+  bindingConflict: "绑定冲突",
+  bindingConflictDetail: "{clients} 存在多个账号绑定，请重新绑定项目后再打开。",
+  resolveBindingConflict: "重新绑定项目",
+  switchToProjectAccount: "切换项目账号",
+  noWorkspacesTitle: "还没有发现项目",
+  noWorkspacesDetail:
+    "在项目目录中使用一次 Codex 或 Claude Code，Mix 就会自动发现；也可以直接选择一个文件夹开始。",
+  environmentsTitle: "账号",
+  environmentsDetail:
+    "点击账号即可切换；若 Codex 正在运行会关闭并重新打开一次。原生会话始终留在客户端目录。Claude Code 管理隔离环境。",
+  files: "配置",
+  technicalDetails: "客户端高级信息",
+  command: "启动命令",
+  nativeDirectory: "原生目录",
+  credentialStorage: "本地私有文件",
+  interactive: "原生客户端登录",
+  configuration: "普通配置",
+  noProfiles: "还没有账号或环境",
+  savedAccounts: "已添加的账号",
+  savedEnvironments: "已添加的环境",
+  accountCount: "{count} 个账号",
+  environmentCount: "{count} 个环境",
+  addEnvironment: "添加环境",
+  clientOwnedAuth: "客户端管理登录",
+  moreActions: "更多操作",
+  moreAccountActions: "更多账号操作",
+  edit: "重命名",
+  remove: "移除",
+  sessionsTitle: "会话",
+  sessionsDetail:
+    "在一个地方查找 Codex 和 Claude Code 的历史会话；Mix 不移动或改写原生记录。",
+  searchSessions: "搜索标题、项目、账号或路径",
+  anyClient: "全部客户端",
+  anyRecovery: "全部状态",
+  recoveryA: "可直接继续",
+  recoveryB: "仅显示来源",
+  recoveryAShort: "可继续",
+  recoveryBShort: "来源可见",
+  recoveryAHelp: "客户端、账号、项目、运行目录与原始路径均已重新验证。",
+  recoveryBHelp: "原始来源仍然可见，但当前信息不足以安全地一键继续。",
+  continueSession: "继续",
+  continueSessionNamed: "继续会话“{title}”",
+  sessionResumeLaunched: "已在 Terminal 中安全打开原生会话",
+  sessionNotOpenedAfterSwitch: "账号已切换，但会话尚未打开：{reason}",
+  sessionUsesProjectAccount: "项目账号：{profile}",
+  sessionUsesCurrentAccount: "账号归属未知；将使用当前账号",
+  copyPath: "复制来源路径",
+  copyResumeCommand: "复制原生恢复命令",
+  resumeCommandCopied: "原生恢复命令已复制",
+  noSessionsTitle: "没有匹配的会话",
+  noSessionsDetail: "运行一次客户端或调整搜索条件后再试。",
+  untitledSession: "未命名会话",
+  loadingSessions: "正在建立本机会话目录…",
+  loadMoreSessions: "加载更多会话",
+  loadedSessionCount: "已加载 {count} 个会话",
+  recoveryReasonUnsupportedCommand:
+    "当前客户端命令不支持安全的一键继续，可复制原生命令手动处理。",
+  recoveryReasonProfileMissing: "原账号已从 Mix 移除。",
+  recoveryReasonRuntimeChanged: "运行目录与创建会话时不一致。",
+  recoveryReasonWorkingDirectory: "原工作目录已移动、丢失或不再属于该项目。",
+  recoveryReasonTranscript: "原始对话记录已丢失或不在经过验证的运行目录内。",
+  recoveryReasonGeneric: "当前信息无法通过安全继续校验。",
+  activityTitle: "可解释、可恢复的本机操作",
+  activityDetail: "查看环境启动、账号添加、同步、切换和备份。",
+  runStarted: "启动环境",
+  accountSaved: "添加账号",
+  accountSynced: "同步当前登录",
+  environmentSelected: "已选择默认环境",
+  switchApplied: "全局配置切换",
+  localOperation: "本机操作",
+  backupCreated: "已创建备份",
+  switchBack: "切回",
+  noActivityTitle: "还没有活动",
+  noActivityDetail: "环境启动、账号添加、同步和切换会按时间记录在这里。",
+  settingsTitle: "偏好与安全",
+  settingsDetail: "控制外观、本地数据边界和客户端健康。",
+  general: "通用",
+  language: "语言",
+  chinese: "中文",
+  english: "English",
+  appearance: "外观",
+  system: "跟随系统",
+  light: "浅色",
+  dark: "深色",
+  security: "安全",
+  securityTitle: "本地优先边界",
+  securityBody:
+    "Mix 不上传登录凭证或会话。账号登录保存在 ~/.mix 的本地私有文件中；目录权限为 700、凭证文件为 600。",
+  credentialStorageTitle: "本地凭证",
+  credentialStorageBody:
+    "{backend} 已就绪；Mac App、CLI 和 Local Web 直接共用，不需要系统密码或额外授权。",
+  credentialStorageReady: "本地可用",
+  credentialStorageUnavailable: "本地目录不可用",
+  credentialStorageUnavailableAction:
+    "Mix 无法访问本地凭证目录。请检查 ~/.mix 的所有者和读写权限后重试。",
+  privacyTitle: "隐私与遥测",
+  privacyBody:
+    "当前版本没有产品埋点、广告 SDK、云同步或自动崩溃上传。启动的 Codex、Claude 等客户端仍遵循各自的联网和隐私策略。",
+  telemetryOff: "遥测关闭",
+  uninstallDataTitle: "卸载与数据保留",
+  uninstallDataBody:
+    "移除 Mac App 或 CLI 不会删除 Mix 数据和原生会话。清除 ~/.mix 是单独操作；其中的隔离运行环境也可能包含原生会话，删除前必须检查。",
+  uninstallKeepsHistory: "卸载不删历史",
+  healthCenter: "健康中心",
+  runChecks: "重新检查",
+  noIssues: "所有已连接客户端都可以启动。",
+  issueInterruptedSwitch: "存在尚未完成的账号切换，请先恢复。",
+  issueCleanupPending: "已删除项目的本地敏感数据仍在等待安全清理。",
+  issueNoProfiles: "尚未添加账号或环境。",
+  issueRunCommandMissing: "尚未配置客户端启动命令。",
+  issueRunCommandUnavailable: "找不到配置的客户端启动命令。",
+  issueUnmanagedAccount: "客户端当前登录尚未添加到 Mix。",
+  issueUnsupportedAccountProfile: "存在无法验证身份的旧账号；请移除后通过原生登录重新添加。",
+  issueCredentialStoreUnavailable: "本地凭证目录当前不可用。",
+  advanced: "高级设置",
+  softwareUpdates: "软件更新",
+  signedUpdates: "安全更新",
+  updatesEnabledBody:
+    "Mix 只检查新版本；安装会前往官方发布页，由 macOS 验证公证和 Developer ID 签名的 DMG。",
+  updatesDisabledBody:
+    "本地构建不会连接更新服务；只有配置了真实公钥和 HTTPS 端点的正式发行版才启用。",
+  updatesWebBody: "Local Web 不安装桌面更新，请在签名的 Mac App 中检查。",
+  localBuild: "本地构建",
+  macAppOnly: "仅 Mac App",
+  checkForUpdates: "检查更新",
+  checkingForUpdates: "正在检查",
+  automaticChecks: "自动检查",
+  automaticChecksBody: "启动时检查新版本，只提示，不会自动下载或安装。",
+  automatic: "自动",
+  manual: "手动",
+  upToDate: "已是最新",
+  lastCheckFailed: "上次检查失败",
+  updateCurrent: "当前已是最新版本",
+  updateCheckFailed: "检查更新失败",
+  updateCheckRetry: "请检查网络连接或稍后重试；当前版本未改变",
+  updateAvailable: "有可用更新",
+  reviewUpdate: "查看更新",
+  updateAvailableTitle: "发现新版本",
+  updateAvailableDetail:
+    "Mix {version} 已发布。请从官方发布页下载并安装签名 DMG。",
+  currentVersion: "当前版本",
+  newVersion: "新版本",
+  releaseNotes: "版本说明",
+  manualUpdateSafetyBody:
+    "Mix 不会在后台替换当前 App。请从官方发布页下载公证 DMG，由 macOS 在安装时验证签名。",
+  openReleasePage: "前往官方发布页",
+  releasePageFailed: "无法打开官方发布页",
+  later: "稍后",
+  support: "支持与诊断",
+  installedVersion: "运行版本",
+  installedVersionDetail: "用于确认当前打开的 App、CLI 或 Local Web 是否来自同一版构建。",
+  diagnosticsTitle: "脱敏诊断报告",
+  diagnosticsBody:
+    "复制版本、平台、能力状态和数量统计，用于排查问题；报告不包含账号名、路径、凭证或会话内容。",
+  copyDiagnostics: "复制诊断报告",
+  diagnosticsCopied: "脱敏诊断报告已复制",
+  diagnosticsFailed: "无法生成诊断报告",
+  diagnosticsRedaction:
+    "生成前自动最小化数据：排除本地凭证值、账号与环境名称、项目路径、命令、会话标题和对话内容。",
+  thirdPartyLicenses: "开源许可证",
+  licenseEvidenceBody:
+    "查看随当前桌面版打包的 Rust 与 npm 依赖许可证全文及组件归属。",
+  openLicenses: "查看许可证",
+  licensesFailed: "无法打开许可证",
+  primaryNavigation: "主导航",
+  filterClient: "按客户端筛选",
+  filterRecovery: "按可用状态筛选",
+  refresh: "刷新",
+  refreshed: "已刷新",
+  localServiceOffline: "无法连接本地核心",
+  localServiceAuthorizationExpired:
+    "当前页面与 Mix 本地服务的连接已失效。Mac App 请重新打开；浏览器请重新运行 mix web 并使用新链接。",
+  retry: "重试",
+  cancel: "取消",
+  saving: "正在保存",
+  connectClientTitle: "连接 AI 编程客户端",
+  connectClientDetail:
+    "Mix 只读取安装、目录和用于识别账号的最小本地身份信息；不会上传凭证或会话正文。",
+  detected: "已检测",
+  notInstalled: "未检测到",
+  alreadyConnected: "已连接",
+  existingConfig: "发现本机配置",
+  existingSessions: "发现历史",
+  configDirectory: "配置目录",
+  advancedSettings: "高级设置",
+  chooseFolder: "选择目录",
+  chooseProjectFolder: "选择项目目录",
+  folderPickerFailed: "无法打开目录选择器",
+  connect: "连接客户端",
+  createProfileTitle: "添加账号",
+  createProfileDetail:
+    "Mix 自动识别当前 Codex 登录；添加后即可一键切换，原生会话仍留在原位置。",
+  createEnvironmentTitle: "添加环境",
+  createEnvironmentDetail:
+    "为客户端添加一套独立配置。客户端原生登录和会话历史仍由客户端管理。",
+  client: "客户端",
+  displayName: "账号名称",
+  environmentName: "环境名称",
+  sourceMode: "添加方式",
+  saveAccount: "添加账号",
+  credentialCaptureTitle: "凭证与会话分开保存",
+  credentialCaptureDetail:
+    "登录凭证保存到 ~/.mix 的私有文件；会话始终留在客户端的原生目录。",
+  signInLater: "创建空白环境",
+  signInLaterDetail: "先创建隔离配置，启动客户端后再按客户端自己的方式登录。",
+  copyCurrentConfig: "复制当前配置",
+  copyCurrentConfigDetail:
+    "仅复制经过安全检查的普通设置；发现认证或密钥时会拒绝导入。",
+  importUnavailable: "此客户端没有声明可安全导入的配置文件。",
+  sensitiveConfigRejected:
+    "检测到可能的明文凭据。Mix 未保存或复制它；普通配置只应包含非敏感值，密钥请在“机密环境”中引用本地凭证。",
+  advancedReference: "高级 Provider 配置",
+  advancedReferenceDetail: "适合自定义 Provider、环境变量和企业配置。",
+  ordinaryFiles: "普通设置文件，每行 LIVE=绝对路径",
+  ordinaryEnv: "普通环境变量，每行 ENV=VALUE",
+  secretEnv: "敏感环境变量，每行 ENV=SERVICE/ACCOUNT",
+  profileImportCaution:
+    "仅复制此客户端明确允许且通过安全检查的普通设置；认证仍由客户端或系统管理，不会把目录隔离误报为账号隔离。",
+  createEnvironment: "添加",
+  editProfileTitle: "编辑账号",
+  editProfileDetail: "修改账号名称；不会重新登录，也不会影响项目或历史会话。",
+  editEnvironmentTitle: "编辑环境",
+  editEnvironmentDetail:
+    "修改环境名称或显示信息，不会改变客户端登录和原生会话。",
+  editProfileSafeTitle: "不会改动登录或历史",
+  editProfileSafeDetail: "名称只是 Mix 内用于区分的显示信息。",
+  saveChanges: "保存更改",
+  removeProfileTitle: "从 Mix 移除此账号？",
+  removeProfileDetail: "移除“{profile}”的 Mix 管理记录。",
+  removeEnvironmentTitle: "从 Mix 移除此环境？",
+  removeEnvironmentDetail: "移除“{profile}”的 Mix 环境记录。",
+  removeProfileImpact:
+    "Mix 会清理保存的凭证和托管配置；客户端原生历史不会删除。",
+  removeActiveReplacement: "这是当前账号或环境。移除前将安全切换到：",
+  removeActiveOnly:
+    "这是唯一账号或环境。客户端保持当前状态，但 Mix 将不再管理或切换它。",
+  removeWorkspaceBindings:
+    "有 {count} 个项目使用此账号或环境；移除后会解除这些绑定，项目和历史不会删除。",
+  removeKeepsHistory: "不会删除客户端账号，也不会删除原生会话",
+  confirmRemove: "从 Mix 移除",
+  workspaceName: "工作区名称",
+  projectPath: "项目目录",
+  useClient: "在此项目使用 {client}",
+  doNotUse: "不使用",
+  addProject: "添加项目",
+  projectSettings: "项目设置",
+  editWorkspaceTitle: "编辑项目",
+  editWorkspaceDetail: "修改项目名称和账号绑定；项目目录和原生会话不会移动。",
+  removeWorkspaceTitle: "从 Mix 移除此项目？",
+  removeWorkspaceDetail: "移除“{workspace}”的 Mix 管理记录。",
+  removeWorkspaceKeepsSessions:
+    "只移除 Mix 中的项目名称和账号绑定；项目目录、代码及原生会话仍保留原位。",
+  switchBackTitle: "切回之前的账号或环境？",
+  switchBackDetail:
+    "Mix 会发起一次新的安全切换，目标为 {profile}，并先为当前状态创建新备份。",
+  switchBackImpact: "这不是撤销旧事务；它会重新切换账号和配置，不会修改原生会话内容。",
+  confirmSwitchBack: "确认切回",
+  paletteTitle: "快速操作",
+  palettePlaceholder: "输入命令或工作区名称",
+  navigateTo: "前往",
+  switchLanguage: "切换语言",
+  switchTheme: "切换外观",
+  createNew: "新建",
+  noCommands: "没有匹配的操作",
+  profileEdited: "环境信息已更新，原生历史未改动",
+  accountRemoved: "账号已从 Mix 移除，原生历史仍保留",
+  environmentRemoved: "环境已移除，原生历史仍保留",
+  accountRemovedWithWarning:
+    "账号已移除，原生历史仍保留；本地凭证清理未完全完成",
+  environmentRemovedWithWarning:
+    "环境已移除，原生历史仍保留；本地凭证清理未完全完成",
+  replacementAppliedRemovalFailed:
+    "已切换到替代账号或环境，但原条目未能移除。原条目仍保留在 Mix，请刷新后重试。",
+  workspaceUpdated: "项目已更新",
+  workspaceRemoved: "项目已从 Mix 移除；目录和原生会话仍保留",
+  clientConnected: "客户端已连接",
+  profileCreated: "环境已创建",
+  workspaceCreated: "工作区已添加",
+  runLaunched: "已在 Terminal 中启动隔离环境",
+  switchBackCompleted: "已切回并创建新备份",
+  invalidBinding: "每一行都必须使用 NAME=VALUE 格式",
+  invalidSecret: "本地凭证引用必须使用 SERVICE/ACCOUNT",
+  unknownError: "操作没有完成",
+  pathCopied: "来源路径已复制",
+  defaultAccountLabel: "{client} 账号 {number}",
+  defaultEnvironmentLabel: "{client} 环境 {number}",
+  detectedCurrentLogin: "已识别当前登录",
+  nameCanChangeLater: "账号名称用于区分，可随时修改",
+  accountNameHint:
+    "例如“个人”“公司”或“客户 A”；名称不会影响登录、项目绑定或历史会话。",
+  accountNameRequired: "请输入账号名称。",
+  customizeAccount: "高级设置",
+  addMethod: "添加方式",
+  currentAccountAlreadyAdded: "当前登录已添加",
+  nativeClientSignIn: "使用 Codex 官方登录",
+  enrollAnotherAccount: "另一个账号",
+  enrollAnotherAccountDetail:
+    "Mix 会打开 Codex 官方登录，并在隔离目录中添加新账号，不影响当前登录。",
+  isolatedLoginHome: "登录在一次性隔离目录中完成",
+  currentAccountUnaffected: "当前账号保持登录，不会被覆盖",
+  continueToSignIn: "继续登录",
+  enrollmentStarted: "已打开隔离的 Codex 登录窗口",
+  enrollmentFailed: "另一个 Codex 账号没有添加成功",
+  enrollmentTimedOut: "登录等待超时；如果登录已完成，请刷新账号列表。",
+  accountReauthRequired: "需要重新验证此账号",
+  accountRefreshFailed:
+    "无法刷新目标账号的登录状态；当前账号没有改变。请检查网络后重试。",
+  repairLoginStarted:
+    "当前登录不是该账号，已打开 Codex 官方登录；请登录同一个账号",
+  accountRepaired: "账号登录已修复；再次点击即可切换",
+  accountRepairedLocally:
+    "已使用当前 Codex 的同一账号登录修复凭证；未切换当前账号",
+  customAccountRepairUnavailable:
+    "当前登录与此自定义 Provider 账号不匹配。请重新添加该 Provider 的 API Key；Mix 不会改用不匹配的官方登录。",
+  accountRepairFailed: "账号登录修复失败",
+  accountRepairIdentityMismatch:
+    "登录的不是同一个账号，Mix 未覆盖原账号。请重新操作并选择要修复的账号。",
+  simpleWorkspaceTitle: "添加项目",
+  simpleWorkspaceDetail:
+    "只需选择项目目录；名称和当前账号绑定会自动完成。工作区不影响账号切换。",
+  automaticBinding: "自动使用当前账号",
+  automaticBindingDetail:
+    "Mix 会为每个已连接客户端选择当前环境；需要时可在高级选项中修改。",
+  customizeWorkspace: "自定义名称或账号绑定",
+  chooseProjectRequired: "请选择项目目录。",
+  manageCurrentAccount: "查看和切换 {client} 当前账号",
+  chooseProjectFolderAction: "选择文件夹",
+  projectsFoundAutomatically: "项目无需手工维护",
+  projectsFoundAutomaticallyDetail:
+    "Mix 只根据本机原生会话和你选择过的文件夹自动识别，不会扫描整块磁盘。",
+  autoDetected: "自动发现",
+  continueWorking: "打开最近会话",
+  openInClientApp: "在 {client} 中打开",
+  openInClientTerminal: "在 Terminal 中打开 {client}",
+  projectOpenedInClient: "项目已在客户端中打开",
+  noAccountReady: "没有可用账号",
+  moreProjectActions: "更多打开方式",
+  lastTask: "最近会话",
+  noProjectTasks: "还没有会话；在原生客户端打开后会自动出现在这里",
+  sessionCount: "{count} 个会话",
+  nativeHistoryUntouchedShort: "原生历史保留",
+  discoveringProjects: "正在从本机会话识别项目…",
+  noProjectMatches: "没有匹配的项目",
+  adjustProjectSearch: "换一个项目名称、会话标题或路径搜索。",
+  unclassifiedSessions: "未归类",
+  sessionGrouping: "会话排列方式",
+  groupByProject: "按项目",
+  groupByTime: "按时间",
+};
+
+const en: Record<keyof typeof zh, string> = {
+  switchRevertedByClientError:
+    "The client could not run stably with the target account or environment. The operation did not complete, and Mix restored the previous state; session bodies, IDs, and locations were not moved or rewritten.",
+  switchRolledBackWithReason: "{summary} Reason: {reason}",
+  switchRolledBackToProfile: "{summary} The current account is back to “{profile}”.",
+  switchRolledBackCleanupPending:
+    "The previous account and configuration were restored, but temporary recovery data still needs cleanup. Finish cleanup in Activity & recovery first.",
+  credentialTooLargeError:
+    "The login exceeds the 2 MiB safety limit. Mix did not write truncated data; check whether the client's login file is abnormal.",
+  resourceConflictError:
+    "This account, environment, or client is still active or bound to a project. Remove the binding or choose a replacement, then retry.",
+  savedAccountsAndEnvironments: "Added accounts & environments",
+  profileMixCount: "{accounts} accounts · {environments} environments",
+  accountIdentity: "Account",
+  productSubtitle: "AI coding environment manager",
+  localOnly: "Data stays on this computer",
+  close: "Close",
+  healthy: "Healthy",
+  attention: "Needs attention",
+  workspaces: "Projects",
+  environments: "Accounts",
+  sessions: "Sessions",
+  activity: "Activity & recovery",
+  settings: "Settings",
+  searchActions: "Search and quick actions",
+  ready: "Ready",
+  warning: "Check required",
+  setupRequired: "Setup required",
+  signedOut: "Signed out",
+  chooseSavedAccount: "Choose a saved account below to sign in again",
+  open: "Open",
+  addWorkspace: "Add project",
+  addClient: "Connect client",
+  addProfile: "Add account",
+  switchEnvironment: "Switch environment",
+  switchingAccount: "Switching…",
+  activeAccount: "Current account",
+  activeEnvironment: "Current environment",
+  workspaceAccountDifferent:
+    "This project still uses “{profile}”; global switching does not change project bindings.",
+  nativeHistoryKept: "Native directory preserved",
+  switchCompleted:
+    "Switch complete; conversation bodies were neither moved nor rewritten",
+  switchCompletedAndClientOpened:
+    "Switch complete. The client reopened and native sessions remain in place",
+  clientOpened:
+    "Client opened; the current account and native history are unchanged",
+  operationCompletedWithWarning: "Applied, but needs attention",
+  officialAccount: "Official account",
+  customProvider: "Third-party provider",
+  historyContinuityLabel: "Native history continuity",
+  historyContinuityDetail:
+    "Mix does not own session databases or conversation bodies. During a Codex cross-Provider switch it updates only native Provider metadata with rollback; the Sessions page reads bounded native metadata and titles locally.",
+  unsupportedAccountProfileDetail:
+    "This legacy entry has no verifiable account identity and cannot switch safely. Add the real account again, then remove this entry.",
+  enabled: "Enabled",
+  codexFileAuthReady: "Codex file login ready",
+  codexFileAuthRequired:
+    'Codex currently uses {storage} credentials. To prevent switching the wrong account, Mix will not read a possibly stale auth.json. Set cli_auth_credentials_store to "file", then sign in once through Codex.',
+  codexSignInRequired:
+    "No Codex file login was detected. Sign in through Codex before adding the current account.",
+  codexSignedOutSavedReady:
+    "Codex is signed out. Choose a saved account below to sign in again without signing in manually first.",
+  codexInvalidConfig:
+    "Codex config.toml cannot be parsed. Fix it before adding or switching accounts safely.",
+  codexInvalidAuth:
+    "The Codex login file is unreadable or damaged. To avoid switching to the wrong account, sign in through Codex again and retry.",
+  codexIdentityUnavailable:
+    "The Codex login file has no verifiable account identity. Mix cannot safely distinguish accounts; sign in through Codex again and retry.",
+  codexAccountSwitchUnsupported:
+    "This client does not currently support Mix-managed account switching.",
+  projectNotOpenedAfterSwitch:
+    "Account switched, but the project was not opened: {reason}",
+  recheckAccountStatus: "Check again",
+  clientStillRunningError:
+    "The client is still running, so Mix stopped without changing any files. Close the client and retry.",
+  switchRolledBackError:
+    "The switch did not complete. Mix restored the previous account, configuration, and Provider metadata; session bodies, IDs, and locations were not rewritten.",
+  switchRecoveryRequiredError:
+    "An interrupted switch still needs recovery. Keep the client closed and restore the previous state from Activity & recovery first.",
+  switchRecoveryIncompleteError:
+    "Automatic recovery could not finish completely. Keep the client closed, preserve the backup, and copy redacted diagnostics for support.",
+  activeAccountUnmanagedError:
+    "The current Codex login has not been added to Mix. Add the current account before switching so an unknown login is not overwritten.",
+  credentialStoreUnavailableError:
+    "Mix cannot access its local credential directory, so it did not save or replace any login credentials. Check ~/.mix permissions and retry.",
+  configurationInvalidError:
+    "Mix could not read the configuration safely. Open Health center to identify the damaged field; switching stays blocked until it is repaired.",
+  accountCredentialInvalidError:
+    "The saved login for this account is invalid or incomplete. Repair it safely before continuing.",
+  sessionContextChangedError:
+    "The project, account, or session source changed. Mix did not launch the session; refresh and confirm it again.",
+  resourceNotFoundError:
+    "The target account, project, or session no longer exists. Refresh and retry.",
+  invalidOperationError:
+    "The request is invalid or the current state does not allow it. Refresh and retry.",
+  switchToAccount: "Switch to this account",
+  addCurrentAccount: "Add current account",
+  addCurrentAccountDetail:
+    "Identify the current local login and add it securely. No sessions are copied.",
+  accountAddCurrentFirst:
+    "Sign in through the client first, then return to add the current account.",
+  accountAdded: "Account added",
+  healthTitle: "{count} clients need review",
+  healthDetail:
+    "Issues are grouped by client. Only blockers require action when you switch or launch.",
+  issueCount: "{count} check results",
+  interruptedSwitchTitle: "Interrupted account switch detected",
+  interruptedSwitchDetail:
+    "The last switch stopped before completion. Mix preserved the pre-switch backup. Keep the client closed and do not switch again until recovery finishes.",
+  interruptedSwitchInvalidDetail:
+    "The recovery record is damaged or the client environment changed. Keep the client closed, preserve the backup, and copy redacted diagnostics for support.",
+  interruptedSwitchScope: "Pending recovery: {from} → {to}",
+  recoverPreviousState: "Restore pre-switch state",
+  recoveringPreviousState: "Restoring safely",
+  recoveryUnavailable: "Manual recovery required",
+  interruptedSwitchRecovered:
+    "Pre-switch state restored; native history and credentials are back in place",
+  transactionCleanupDetail:
+    "The account switch already succeeded. Mix is waiting to remove the old backup and temporary credentials; it will not roll back the completed switch.",
+  cleanupTransaction: "Finish cleanup",
+  transactionCleanupCompleted:
+    "Switch cleanup completed; the current account is unchanged",
+  profiles: "Accounts",
+  workspaceTitle: "Projects",
+  workspaceDetail:
+    "Choose a project and Mix opens the client with its bound Codex account or Claude Code isolated environment. Task execution and session history remain in the native client.",
+  searchWorkspace: "Search projects or sessions",
+  all: "All",
+  current: "Current",
+  missing: "Missing path",
+  bindingConflict: "Binding conflict",
+  bindingConflictDetail:
+    "{clients} have multiple account bindings. Rebind this project before opening.",
+  resolveBindingConflict: "Rebind project",
+  switchToProjectAccount: "Switch project account",
+  noWorkspacesTitle: "No projects found yet",
+  noWorkspacesDetail:
+    "Use Codex or Claude Code once in a project folder and Mix will discover it automatically, or choose a folder to start now.",
+  environmentsTitle: "Accounts",
+  environmentsDetail:
+    "Click an account to switch. If Codex is running, it closes and reopens once. Native sessions always stay in the client directory. Claude Code uses isolated environments.",
+  files: "Config",
+  technicalDetails: "Advanced client information",
+  command: "Run command",
+  nativeDirectory: "Native directory",
+  credentialStorage: "Private local file",
+  interactive: "Native client sign-in",
+  configuration: "Configuration",
+  noProfiles: "No accounts or environments yet",
+  savedAccounts: "Added accounts",
+  savedEnvironments: "Added environments",
+  accountCount: "{count} accounts",
+  environmentCount: "{count} environments",
+  addEnvironment: "Add environment",
+  clientOwnedAuth: "Client-owned sign-in",
+  moreActions: "More actions",
+  moreAccountActions: "More account actions",
+  edit: "Rename",
+  remove: "Remove",
+  sessionsTitle: "Sessions",
+  sessionsDetail:
+    "Find Codex and Claude Code sessions in one place. Mix keeps conversation bodies in their native locations.",
+  searchSessions: "Search title, project, account, or path",
+  anyClient: "All clients",
+  anyRecovery: "All states",
+  recoveryA: "Ready to continue",
+  recoveryB: "Source only",
+  recoveryAShort: "Ready",
+  recoveryBShort: "Source visible",
+  recoveryAHelp:
+    "The client, account, project, runtime, and original path were all re-verified.",
+  recoveryBHelp:
+    "The original source is visible, but there is not enough information for safe one-click continuation.",
+  continueSession: "Continue",
+  continueSessionNamed: "Continue session “{title}”",
+  sessionResumeLaunched: "Native session opened safely in Terminal",
+  sessionNotOpenedAfterSwitch: "Account switched, but the session did not open: {reason}",
+  sessionUsesProjectAccount: "Project account: {profile}",
+  sessionUsesCurrentAccount: "Account ownership unknown; uses the current account",
+  copyPath: "Copy source path",
+  copyResumeCommand: "Copy native resume command",
+  resumeCommandCopied: "Native resume command copied",
+  noSessionsTitle: "No matching sessions",
+  noSessionsDetail: "Run a client once or adjust your search filters.",
+  untitledSession: "Untitled session",
+  loadingSessions: "Building the local session catalog…",
+  loadMoreSessions: "Load more sessions",
+  loadedSessionCount: "{count} sessions loaded",
+  recoveryReasonUnsupportedCommand:
+    "This client command cannot be continued safely with one click. Copy the native command to handle it manually.",
+  recoveryReasonProfileMissing: "The original account was removed from Mix.",
+  recoveryReasonRuntimeChanged:
+    "The runtime no longer matches the one that created this session.",
+  recoveryReasonWorkingDirectory:
+    "The original working directory moved, is missing, or no longer belongs to this project.",
+  recoveryReasonTranscript:
+    "The original conversation history is missing or outside the verified runtime.",
+  recoveryReasonGeneric:
+    "The current information did not pass safe-continuation checks.",
+  activityTitle: "Explainable, recoverable local actions",
+  activityDetail:
+    "Review environment launches, account additions, synchronization, switches, and backups.",
+  runStarted: "Environment launched",
+  accountSaved: "Account added",
+  accountSynced: "Current login synced",
+  environmentSelected: "Default environment selected",
+  switchApplied: "Global configuration switched",
+  localOperation: "Local operation",
+  backupCreated: "Backup created",
+  switchBack: "Switch back",
+  noActivityTitle: "No activity yet",
+  noActivityDetail:
+    "Environment launches, account additions, synchronization, and switches appear here over time.",
+  settingsTitle: "Preferences & security",
+  settingsDetail:
+    "Control appearance, local data boundaries, and client health.",
+  general: "General",
+  language: "Language",
+  chinese: "中文",
+  english: "English",
+  appearance: "Appearance",
+  system: "System",
+  light: "Light",
+  dark: "Dark",
+  security: "Security",
+  securityTitle: "Local-first boundary",
+  securityBody:
+    "Mix never uploads tokens or sessions. Account logins are kept in private local files under ~/.mix with 700 directory and 600 file permissions.",
+  credentialStorageTitle: "Local credentials",
+  credentialStorageBody:
+    "{backend} is ready. The Mac App, CLI, and Local Web share it directly without a system password or extra authorization.",
+  credentialStorageReady: "Available locally",
+  credentialStorageUnavailable: "Local directory unavailable",
+  credentialStorageUnavailableAction:
+    "Mix cannot access its local credential directory. Check the owner and permissions of ~/.mix, then try again.",
+  privacyTitle: "Privacy & telemetry",
+  privacyBody:
+    "This release has no product analytics, advertising SDK, cloud sync, or automatic crash upload. Launched clients such as Codex and Claude still follow their own network and privacy policies.",
+  telemetryOff: "Telemetry off",
+  uninstallDataTitle: "Uninstall & data retention",
+  uninstallDataBody:
+    "Removing the Mac App or CLI does not delete Mix data or native sessions. Erasing ~/.mix is separate; isolated runtimes can also contain native sessions and must be reviewed first.",
+  uninstallKeepsHistory: "Uninstall keeps history",
+  healthCenter: "Health center",
+  runChecks: "Run checks",
+  noIssues: "Every connected client is ready to launch.",
+  issueInterruptedSwitch: "An account switch is incomplete and must be recovered first.",
+  issueCleanupPending: "Sensitive local data from a removed item is still awaiting safe cleanup.",
+  issueNoProfiles: "No account or environment has been added.",
+  issueRunCommandMissing: "The client launch command is not configured.",
+  issueRunCommandUnavailable: "The configured client launch command is unavailable.",
+  issueUnmanagedAccount: "The client's current login has not been added to Mix.",
+  issueUnsupportedAccountProfile: "An older account has no verifiable identity; remove it and add it again through native sign-in.",
+  issueCredentialStoreUnavailable: "The local credential directory is currently unavailable.",
+  advanced: "Advanced settings",
+  softwareUpdates: "Software updates",
+  signedUpdates: "Safe updates",
+  updatesEnabledBody:
+    "Mix checks for new versions only. Installation opens the official release page, where macOS verifies the notarized, Developer ID-signed DMG.",
+  updatesDisabledBody:
+    "Local builds never contact an update service. Only release builds configured with a real public key and HTTPS endpoint enable updates.",
+  updatesWebBody:
+    "Local Web cannot install desktop updates. Check from the signed Mac App.",
+  localBuild: "Local build",
+  macAppOnly: "Mac App only",
+  checkForUpdates: "Check for updates",
+  checkingForUpdates: "Checking",
+  automaticChecks: "Automatic checks",
+  automaticChecksBody:
+    "Check at launch and prompt only. Updates are never downloaded or installed automatically.",
+  automatic: "Automatic",
+  manual: "Manual",
+  upToDate: "Up to date",
+  lastCheckFailed: "Last check failed",
+  updateCurrent: "Mix is up to date",
+  updateCheckFailed: "Update check failed",
+  updateCheckRetry:
+    "Check your connection or try again later; the current version is unchanged",
+  updateAvailable: "Update available",
+  reviewUpdate: "Review update",
+  updateAvailableTitle: "New version available",
+  updateAvailableDetail:
+    "Mix {version} is available. Download and install the signed DMG from the official release page.",
+  currentVersion: "Current version",
+  newVersion: "New version",
+  releaseNotes: "Release notes",
+  manualUpdateSafetyBody:
+    "Mix does not replace the running App in the background. Download the notarized DMG from the official release page and let macOS verify it during installation.",
+  openReleasePage: "Open official release page",
+  releasePageFailed: "Could not open the official release page",
+  later: "Later",
+  support: "Support & diagnostics",
+  installedVersion: "Running version",
+  installedVersionDetail:
+    "Use this to confirm that the open App, CLI, and Local Web come from the same build version.",
+  diagnosticsTitle: "Redacted diagnostic report",
+  diagnosticsBody:
+    "Copy versions, platform details, capability states, and counts for troubleshooting. Account names, paths, credentials, and session content are excluded.",
+  copyDiagnostics: "Copy diagnostics",
+  diagnosticsCopied: "Redacted diagnostics copied",
+  diagnosticsFailed: "Could not create diagnostics",
+  diagnosticsRedaction:
+    "Data is minimized before export: local credential values, account and environment names, project paths, commands, session titles, and conversation history are excluded.",
+  thirdPartyLicenses: "Open-source licenses",
+  licenseEvidenceBody:
+    "View the full Rust and npm dependency license texts and attribution bundled with this desktop build.",
+  openLicenses: "View licenses",
+  licensesFailed: "Could not open licenses",
+  primaryNavigation: "Primary navigation",
+  filterClient: "Filter by client",
+  filterRecovery: "Filter by availability",
+  refresh: "Refresh",
+  refreshed: "Refreshed",
+  localServiceOffline: "Cannot connect to the local core",
+  localServiceAuthorizationExpired:
+    "This page's connection to the Mix local service expired. Reopen the Mac App, or run mix web again and use its new browser link.",
+  retry: "Retry",
+  cancel: "Cancel",
+  saving: "Saving",
+  connectClientTitle: "Connect an AI coding client",
+  connectClientDetail:
+    "Mix reads installation, directory, and the minimum local identity needed to recognize an account. Credentials and transcripts are never uploaded.",
+  detected: "Detected",
+  notInstalled: "Not detected",
+  alreadyConnected: "Connected",
+  existingConfig: "Local config found",
+  existingSessions: "History found",
+  configDirectory: "Configuration directory",
+  advancedSettings: "Advanced settings",
+  chooseFolder: "Choose folder",
+  chooseProjectFolder: "Choose project folder",
+  folderPickerFailed: "Could not open the folder picker",
+  connect: "Connect client",
+  createProfileTitle: "Add account",
+  createProfileDetail:
+    "Mix identifies the current Codex login automatically. Add it for one-click switching while native sessions remain in place.",
+  createEnvironmentTitle: "Add environment",
+  createEnvironmentDetail:
+    "Add an isolated configuration for this client. Native sign-in and session history remain managed by the client.",
+  client: "Client",
+  displayName: "Account name",
+  environmentName: "Environment name",
+  sourceMode: "Add method",
+  saveAccount: "Add account",
+  credentialCaptureTitle: "Credentials and sessions stay separate",
+  credentialCaptureDetail:
+    "Login credentials stay in private files under ~/.mix. Sessions remain in the client's native directory.",
+  signInLater: "Create blank environment",
+  signInLaterDetail:
+    "Create isolated configuration now, then sign in through the client after launch.",
+  copyCurrentConfig: "Copy current configuration",
+  copyCurrentConfigDetail:
+    "Copy regular settings only after a safety check; authentication and keys are rejected.",
+  importUnavailable: "This client has not declared any configuration files that can be imported safely.",
+  sensitiveConfigRejected:
+    "Possible plaintext credentials were detected. Mix did not save or copy them; keep only non-sensitive values in ordinary settings and use a local credential reference under Secret environment.",
+  advancedReference: "Advanced provider setup",
+  advancedReferenceDetail:
+    "For custom providers, environment variables, and enterprise configuration.",
+  ordinaryFiles: "Regular settings, one LIVE=absolute path per line",
+  ordinaryEnv: "Plain environment, one ENV=VALUE per line",
+  secretEnv: "Secret environment, one ENV=SERVICE/ACCOUNT per line",
+  profileImportCaution:
+    "Only regular settings explicitly supported by this client and accepted by safety checks are copied. Authentication remains client- or OS-managed; directory isolation is not presented as account isolation.",
+  createEnvironment: "Add",
+  editProfileTitle: "Edit account",
+  editProfileDetail:
+    "Change the account name without signing in again or affecting projects and session history.",
+  editEnvironmentTitle: "Edit environment",
+  editEnvironmentDetail:
+    "Change its name or display information without altering client sign-in or native sessions.",
+  editProfileSafeTitle: "Login and history are untouched",
+  editProfileSafeDetail: "The name is display metadata used only inside Mix.",
+  saveChanges: "Save changes",
+  removeProfileTitle: "Remove this account from Mix?",
+  removeProfileDetail: "Remove Mix's managed record for “{profile}”.",
+  removeEnvironmentTitle: "Remove this environment from Mix?",
+  removeEnvironmentDetail: "Remove Mix's environment record for “{profile}”.",
+  removeProfileImpact:
+    "Mix removes saved credentials and managed configuration. Native client history is never deleted.",
+  removeActiveReplacement:
+    "This is the current account or environment. Before removing it, safely switch to:",
+  removeActiveOnly:
+    "This is the only account or environment. The client stays as-is, but Mix will no longer manage or switch it.",
+  removeWorkspaceBindings:
+    "{count} projects use this account or environment. Their bindings are detached; projects and history are not deleted.",
+  removeKeepsHistory: "Does not delete client accounts or native sessions",
+  confirmRemove: "Remove from Mix",
+  workspaceName: "Workspace name",
+  projectPath: "Project directory",
+  useClient: "Use {client} in this project",
+  doNotUse: "Do not use",
+  addProject: "Add project",
+  projectSettings: "Project settings",
+  editWorkspaceTitle: "Edit project",
+  editWorkspaceDetail:
+    "Change its name and account bindings without moving the project directory or native sessions.",
+  removeWorkspaceTitle: "Remove this project from Mix?",
+  removeWorkspaceDetail: "Remove Mix's managed record for “{workspace}”.",
+  removeWorkspaceKeepsSessions:
+    "Only the project name and account bindings are removed from Mix. The directory, code, and native sessions stay in place.",
+  switchBackTitle: "Switch back to the previous account or environment?",
+  switchBackDetail:
+    "Mix will start a new safe switch to {profile} and back up the current state first.",
+  switchBackImpact:
+    "This does not undo an old transaction; it switches the account and configuration again without editing native session content.",
+  confirmSwitchBack: "Confirm switch back",
+  paletteTitle: "Quick actions",
+  palettePlaceholder: "Type an action or workspace name",
+  navigateTo: "Go to",
+  switchLanguage: "Switch language",
+  switchTheme: "Switch appearance",
+  createNew: "Create",
+  noCommands: "No matching actions",
+  profileEdited: "Environment updated; native history was untouched",
+  accountRemoved: "Account removed from Mix; native history remains in place",
+  environmentRemoved: "Environment removed; native history remains in place",
+  accountRemovedWithWarning:
+    "Account removed and native history kept, but local credential cleanup did not fully finish",
+  environmentRemovedWithWarning:
+    "Environment removed and native history kept, but local credential cleanup did not fully finish",
+  replacementAppliedRemovalFailed:
+    "Mix switched to the replacement account or environment, but could not remove the original entry. It remains in Mix; refresh and retry.",
+  workspaceUpdated: "Project updated",
+  workspaceRemoved:
+    "Project removed from Mix; its directory and native sessions remain",
+  clientConnected: "Client connected",
+  profileCreated: "Environment created",
+  workspaceCreated: "Workspace added",
+  runLaunched: "Isolated environment opened in Terminal",
+  switchBackCompleted: "Switched back and created a new backup",
+  invalidBinding: "Every line must use NAME=VALUE",
+  invalidSecret: "Local credential references must use SERVICE/ACCOUNT",
+  unknownError: "The operation did not complete",
+  pathCopied: "Source path copied",
+  defaultAccountLabel: "{client} account {number}",
+  defaultEnvironmentLabel: "{client} environment {number}",
+  detectedCurrentLogin: "Current login identified",
+  nameCanChangeLater:
+    "Use this name to recognize the account; change it at any time",
+  accountNameHint:
+    "For example, Personal, Work, or Client A. The name never changes login, project bindings, or session history.",
+  accountNameRequired: "Enter an account name.",
+  customizeAccount: "Advanced settings",
+  addMethod: "Add method",
+  currentAccountAlreadyAdded: "Current login already added",
+  nativeClientSignIn: "Use official Codex sign-in",
+  enrollAnotherAccount: "Another account",
+  enrollAnotherAccountDetail:
+    "Mix opens official Codex sign-in and adds the new account in an isolated directory without affecting the current login.",
+  isolatedLoginHome: "Sign-in runs in a one-time isolated directory",
+  currentAccountUnaffected:
+    "The current account stays signed in and is never overwritten",
+  continueToSignIn: "Continue to sign in",
+  enrollmentStarted: "Isolated Codex sign-in opened",
+  enrollmentFailed: "The other Codex account could not be added",
+  enrollmentTimedOut:
+    "Sign-in timed out. If it completed, refresh the account list.",
+  accountReauthRequired: "This account needs to be verified again",
+  accountRefreshFailed:
+    "The target login could not be refreshed. The current account was not changed. Check your network and try again.",
+  repairLoginStarted:
+    "The active login is not this account, so Codex official sign-in opened. Sign in to the same account",
+  accountRepaired:
+    "Account login repaired. Click it again to switch",
+  accountRepairedLocally:
+    "Credential repaired from the active Codex login for the same account; current account unchanged",
+  customAccountRepairUnavailable:
+    "The active login does not match this custom Provider account. Add that Provider API key again; Mix will not substitute an unrelated official login.",
+  accountRepairFailed: "Account login repair failed",
+  accountRepairIdentityMismatch:
+    "You signed in to a different account, so Mix did not overwrite the saved account. Try again and choose the account being repaired.",
+  simpleWorkspaceTitle: "Add project",
+  simpleWorkspaceDetail:
+    "Choose only the project folder. Mix derives the name and uses the current accounts automatically. Projects are optional for account switching.",
+  automaticBinding: "Use current accounts automatically",
+  automaticBindingDetail:
+    "Mix selects the active environment for every connected client. Change this under advanced options when needed.",
+  customizeWorkspace: "Customize name or account bindings",
+  chooseProjectRequired: "Choose a project folder.",
+  manageCurrentAccount: "View and switch the current {client} account",
+  chooseProjectFolderAction: "Choose folder",
+  projectsFoundAutomatically: "No manual project maintenance",
+  projectsFoundAutomaticallyDetail:
+    "Mix only uses native local sessions and folders you chose. It never scans the whole disk.",
+  autoDetected: "Auto-detected",
+  continueWorking: "Open latest session",
+  openInClientApp: "Open in {client}",
+  openInClientTerminal: "Open {client} in Terminal",
+  projectOpenedInClient: "Project opened in the client",
+  noAccountReady: "No account ready",
+  moreProjectActions: "More ways to open",
+  lastTask: "Latest session",
+  noProjectTasks:
+    "No sessions yet. Open the project in its native client and they will appear here.",
+  sessionCount: "{count} sessions",
+  nativeHistoryUntouchedShort: "Native history kept",
+  discoveringProjects: "Finding projects from local sessions…",
+  noProjectMatches: "No matching projects",
+  adjustProjectSearch: "Try another project name, session title, or path.",
+  unclassifiedSessions: "Unclassified",
+  sessionGrouping: "Session layout",
+  groupByProject: "By project",
+  groupByTime: "By time",
+};
+
+export const COPY = { zh, en };
+export type CopyKey = keyof typeof zh;
+
+export function createTranslator(language: Language) {
+  return (key: CopyKey, values?: Record<string, string | number>) => {
+    let value: string = COPY[language][key];
+    for (const [name, replacement] of Object.entries(values || {}))
+      value = value.replace(`{${name}}`, String(replacement));
+    return value;
+  };
+}

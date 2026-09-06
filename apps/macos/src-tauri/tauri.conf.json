@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "mix",
+  "version": "0.1.2",
+  "identifier": "dev.mix.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{
+      "label": "main",
+      "title": "mix",
+      "width": 1040,
+      "height": 760,
+      "minWidth": 720,
+      "minHeight": 560,
+      "resizable": true
+    }],
+    "security": {
+      "csp": "default-src 'self'; base-uri 'none'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": ["icons/icon.icns"],
+    "category": "DeveloperTool",
+    "shortDescription": "Switch AI coding accounts without losing native history",
+    "longDescription": "Mix is a local-first account and workspace manager for Codex and Claude Code.",
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "hardenedRuntime": true,
+      "files": {
+        "Resources/THIRD-PARTY-LICENSES.html": "resources/THIRD-PARTY-LICENSES.html"
+      }
+    }
+  }
+}
