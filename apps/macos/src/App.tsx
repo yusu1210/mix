@@ -277,6 +277,7 @@ function activityLabel(kind: string, t: Translate): string {
   const keys: Record<string, CopyKey> = {
     run: "runStarted",
     switch: "switchApplied",
+    switch_failed: "switchFailed",
     account_added: "accountSaved",
     account_synchronized: "accountSynced",
     environment_selected: "environmentSelected",

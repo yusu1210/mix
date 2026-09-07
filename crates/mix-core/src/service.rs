@@ -970,6 +970,29 @@ impl MixService {
     }
 
     pub fn switch(&self, app: &str, profile: &str) -> Result<SwitchOutcome> {
+        let mut stage = "validation";
+        let result = self.switch_account(app, profile, &mut stage);
+        if let Err(error) = &result {
+            // Persist only stable diagnostics, never credentials, selectors,
+            // native paths, or an upstream error body.
+            let _ = self.record_activity(
+                "switch_failed",
+                json!({
+                    "stage": stage,
+                    "error_code": error.code.as_str(),
+                    "version": env!("CARGO_PKG_VERSION"),
+                }),
+            );
+        }
+        result
+    }
+
+    fn switch_account(
+        &self,
+        app: &str,
+        profile: &str,
+        stage: &mut &'static str,
+    ) -> Result<SwitchOutcome> {
         let _guard = self.lock_mutation()?;
         let config = self.store.load()?;
         let mut outcome = None;
@@ -1011,6 +1034,7 @@ impl MixService {
             };
             let source = global_account.switch_source(client)?;
             if source.as_deref() == Some(profile.as_str()) {
+                *stage = "synchronize_current";
                 let synchronized =
                     global_account.synchronize_source(client, self.vault.as_ref())?;
                 if synchronized.as_deref() != Some(profile.as_str()) {
@@ -1021,6 +1045,7 @@ impl MixService {
                 }
                 client.active_profile = Some(profile.clone());
                 let controller = self.process_controller(client);
+                *stage = "activate_current";
                 let restarted = controller.ensure_active()?;
                 outcome = Some(SwitchOutcome {
                     status: "already_active".into(),
@@ -1034,17 +1059,22 @@ impl MixService {
                 });
                 return Ok(());
             }
+            *stage = "prepare_credential";
             global_account.prepare_target_credential(client, &target, self.vault.as_ref())?;
             let controller = self.process_controller(client);
             stopped_controller = Some(controller.clone());
             restart_required = controller.restart_configured();
+            *stage = "stop_client";
             let stopped = controller.stop()?;
             stopped_pids = stopped.clone();
+            *stage = "synchronize_source";
             let from_name = global_account.synchronize_source(client, self.vault.as_ref())?;
             let from = from_name
                 .as_ref()
                 .and_then(|name| client.profiles.get(name));
+            *stage = "prepare_history";
             let projection = global_account.switch_projection(client, &target)?;
+            *stage = "prepare_transaction";
             let journal = SwitchJournal::prepare(
                 &config.root,
                 SwitchPlan {
@@ -1061,16 +1091,21 @@ impl MixService {
                 },
                 self.vault.as_ref(),
             )?;
+            *stage = "apply_transaction";
             journal.apply(self.vault.as_ref())?;
+            *stage = "verify_projection";
             global_account.verify_projection(client, &target)?;
+            *stage = "restart_client";
             let restarted = if restart_required {
                 controller.start()?
             } else {
                 false
             };
             if restarted {
+                *stage = "verify_restart";
                 global_account.verify_stable_projection(client, &target)?;
             }
+            *stage = "synchronize_target";
             global_account.synchronize_target(client, &target, self.vault.as_ref())?;
             client.active_profile = Some(profile.clone());
             outcome = Some(SwitchOutcome {
@@ -1146,6 +1181,7 @@ impl MixService {
             return Err(error);
         }
         if let Some(journal) = SwitchJournal::load(&config.root)? {
+            *stage = "commit_transaction";
             ensure_journal_belongs_to_client(&config, app, &journal)?;
             if let Err(error) = journal.commit(&config.root, self.vault.as_ref()) {
                 let pending = SwitchJournal::load(&config.root)?;
@@ -2210,6 +2246,15 @@ impl MixService {
             "credential_store": state.security.credential_store,
             "recovery_required": state.recovery.interrupted_switch.required,
             "clients": clients,
+            "recent_switch_failures": self.activities(50)?.into_iter()
+                .filter(|activity| activity.kind == "switch_failed")
+                .take(5)
+                .map(|activity| json!({
+                    "at": activity.at,
+                    "stage": activity.data.get("stage"),
+                    "error_code": activity.data.get("error_code"),
+                    "version": activity.data.get("version"),
+                })).collect::<Vec<_>>(),
         }))
     }
 
@@ -4347,6 +4392,11 @@ mod tests {
         assert_eq!(credential, b"credential-a");
         assert_eq!(active.as_deref(), Some("source"));
         assert!(!SwitchJournal::path(service.store.root().unwrap()).exists());
+        let failures = service.diagnostics().unwrap()["recent_switch_failures"].clone();
+        assert_eq!(failures[0]["stage"], "prepare_credential");
+        assert_eq!(failures[0]["error_code"], "MIX_ACCOUNT_REFRESH_FAILED");
+        assert_eq!(failures[0]["version"], env!("CARGO_PKG_VERSION"));
+        assert!(!failures.to_string().contains("credential-a"));
     }
 
     #[cfg(unix)]
@@ -7492,6 +7542,14 @@ enabled = true
     fn codex_switch_keeps_every_credential_and_provider_route_paired() {
         let cases = [
             (
+                "official-to-official",
+                "model = \"official\"\n",
+                json!({"tokens":{"account_id":"official-a","access_token":"first-token"}}),
+                "model = \"official\"\n",
+                json!({"tokens":{"account_id":"official-b","access_token":"second-token"}}),
+                "openai",
+            ),
+            (
                 "official-to-custom",
                 "model = \"official\"\n",
                 json!({"tokens":{"account_id":"official-a","access_token":"official-token"}}),
@@ -7616,6 +7674,39 @@ enabled = true
                 })
                 .unwrap();
 
+            let source_provider = provider_from_toml(&toml::from_str(source_config).unwrap()).id;
+            fs::create_dir_all(live.join("sqlite")).unwrap();
+            let rollout = live.join("sessions/rollout.jsonl");
+            fs::create_dir_all(rollout.parent().unwrap()).unwrap();
+            let body =
+                "\n{\"type\":\"event_msg\",\"payload\":{\"message\":\"keep this conversation\"}}\n";
+            fs::write(
+                &rollout,
+                format!(
+                    "{}{}",
+                    json!({"type":"session_meta","payload":{"model_provider":source_provider}}),
+                    body
+                ),
+            )
+            .unwrap();
+            for relative in ["state_5.sqlite", "sqlite/state_5.sqlite"] {
+                let database = live.join(relative);
+                let seed = database.with_extension("seed");
+                let connection = rusqlite::Connection::open(&seed).unwrap();
+                connection.execute_batch("PRAGMA journal_mode = WAL; CREATE TABLE threads (rollout_path TEXT, model_provider TEXT);").unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO threads VALUES ('sessions/rollout.jsonl', ?1)",
+                        [&source_provider],
+                    )
+                    .unwrap();
+                connection
+                    .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+                    .unwrap();
+                drop(connection);
+                fs::copy(seed, database).unwrap();
+            }
+
             let outcome = service.switch("codex", "target").unwrap();
 
             assert_eq!(outcome.status, "switched", "case: {name}");
@@ -7631,6 +7722,31 @@ enabled = true
                 target_provider,
                 "provider mismatch in case: {name}",
             );
+            for relative in ["state_5.sqlite", "sqlite/state_5.sqlite"] {
+                let connection = rusqlite::Connection::open(live.join(relative)).unwrap();
+                assert_eq!(
+                    connection
+                        .query_row("SELECT model_provider FROM threads", [], |row| row
+                            .get::<_, String>(0))
+                        .unwrap(),
+                    target_provider,
+                    "case: {name}"
+                );
+            }
+            assert!(fs::read_to_string(&rollout).unwrap().ends_with(body));
+            // A -> B -> A must restore account/route and preserve transcript bytes.
+            service.switch("codex", "source").unwrap();
+            assert_eq!(
+                CodexAdapter::parse_auth(&live.join("auth.json")).unwrap(),
+                source_auth
+            );
+            assert_eq!(
+                CodexAdapter::provider(&service.store.load().unwrap().apps["codex"])
+                    .unwrap()
+                    .id,
+                source_provider
+            );
+            assert!(fs::read_to_string(&rollout).unwrap().ends_with(body));
         }
     }
 

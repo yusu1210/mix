@@ -1637,7 +1637,7 @@ describe("Mix product shell", () => {
     expect(screen.getByText("Uninstall keeps history")).toBeTruthy();
     expect(screen.getByText(/isolated runtimes can also contain native sessions/)).toBeTruthy();
     expect(screen.getByText("Running version")).toBeTruthy();
-    expect(screen.getByText("v0.1.2")).toBeTruthy();
+    expect(screen.getByText(`v${__MIX_VERSION__}`)).toBeTruthy();
 
     const audit = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
     expect(audit.violations.map((violation) => `${violation.id}: ${violation.help}`)).toEqual([]);

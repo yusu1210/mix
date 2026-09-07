@@ -5,6 +5,16 @@ All notable user-facing changes to Mix are documented here. Mix follows
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-09-07
+
+### Fixed
+
+- Codex account switching no longer fails when a WAL-mode history database
+  has no `-wal` or `-shm` file after the client exits. Existing WAL content is
+  preserved while staging and verifying both supported history locations.
+- Failed account switches now record their stage, error code, and app version
+  locally and include those fields in diagnostics without credentials or paths.
+
 ## [0.1.2] - 2026-09-06
 
 Initial public release.

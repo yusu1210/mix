@@ -1113,8 +1113,30 @@ fn is_unusable_history_database(error: &rusqlite::Error) -> bool {
 }
 
 fn open_codex_history_database(path: &Path, context: &str) -> Result<Option<Connection>> {
-    match Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
-        Ok(connection) => Ok(Some(connection)),
+    // WAL databases can outlive their -wal/-shm files after the client exits.
+    // SQLite needs write access to recreate those files even for SELECT/backup.
+    // Do not create missing databases, or allow SQL writes to the live history;
+    // provider updates are applied to the staged database by the switch journal.
+    // Existing WAL files may contain uncheckpointed data. Keep those reads
+    // read-only so staging cannot checkpoint or truncate the live sidecar.
+    let wal = path.with_file_name(format!(
+        "{}-wal",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    let flags = match fs::symlink_metadata(wal) {
+        Ok(_) => OpenFlags::SQLITE_OPEN_READ_ONLY,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+        }
+        Err(error) => return Err(Error::io("cannot inspect Codex state journal", error)),
+    };
+    match Connection::open_with_flags(path, flags) {
+        Ok(connection) => {
+            connection
+                .pragma_update(None, "query_only", true)
+                .map_err(|error| sqlite_error(context, error))?;
+            Ok(Some(connection))
+        }
         Err(error) if is_unusable_history_database(&error) => Ok(None),
         Err(error) => Err(sqlite_error(context, error)),
     }
@@ -3731,6 +3753,95 @@ mod tests {
             b"sidecar"
         );
         journal.cleanup_after_restore(root.path(), &vault).unwrap();
+    }
+
+    #[test]
+    fn codex_history_reads_closed_wal_databases_without_sidecars() {
+        let root = tempfile::tempdir().unwrap();
+        let client = ClientConfig {
+            adapter: AdapterKind::Codex,
+            live_dir: root.path().to_path_buf(),
+            active_profile: None,
+            profiles: BTreeMap::new(),
+            run: crate::RunSpec::default(),
+        };
+        for (relative, database) in codex_history_database_paths(&client) {
+            fs::create_dir_all(database.parent().unwrap()).unwrap();
+            let seed = database.with_extension("seed");
+            let connection = Connection::open(&seed).unwrap();
+            connection
+                .execute_batch(
+                    "PRAGMA journal_mode = WAL;
+                 CREATE TABLE threads (rollout_path TEXT, model_provider TEXT);
+                 INSERT INTO threads VALUES ('', 'openai');
+                 PRAGMA wal_checkpoint(TRUNCATE);",
+                )
+                .unwrap();
+            drop(connection);
+            fs::copy(seed, &database).unwrap();
+            assert!(!root.path().join(format!("{relative}-wal")).exists());
+            assert!(!root.path().join(format!("{relative}-shm")).exists());
+            assert_eq!(&fs::read(&database).unwrap()[18..20], &[2, 2]);
+        }
+
+        // Switching between two official accounts still reads the history.
+        assert!(codex_history_database_overrides(&client, "openai")
+            .unwrap()
+            .is_empty());
+        assert!(codex_history_rollout_rewrites(&client, "openai")
+            .unwrap()
+            .is_empty());
+        verify_codex_history_projection(&client, "openai").unwrap();
+        // Changing the route must update both supported database locations.
+        let overrides = codex_history_database_overrides(&client, "custom").unwrap();
+        assert_eq!(overrides.len(), 2);
+    }
+
+    #[test]
+    fn codex_history_reads_committed_wal_rows_without_changing_the_source() {
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("state_5.sqlite");
+        let writer = Connection::open(&database).unwrap();
+        writer
+            .execute_batch(
+                "PRAGMA journal_mode = WAL;
+             PRAGMA wal_autocheckpoint = 0;
+             CREATE TABLE threads (rollout_path TEXT, model_provider TEXT);
+             PRAGMA wal_checkpoint(TRUNCATE);
+             INSERT INTO threads VALUES ('', 'openai');",
+            )
+            .unwrap();
+        let wal = root.path().join("state_5.sqlite-wal");
+        let original_database = fs::read(&database).unwrap();
+        let original_wal = fs::read(&wal).unwrap();
+        assert!(!original_wal.is_empty());
+        let client = ClientConfig {
+            adapter: AdapterKind::Codex,
+            live_dir: root.path().to_path_buf(),
+            active_profile: None,
+            profiles: BTreeMap::new(),
+            run: crate::RunSpec::default(),
+        };
+        let overrides = codex_history_database_overrides(&client, "custom").unwrap();
+        let staged = root.path().join("staged.sqlite");
+        fs::write(&staged, &overrides["state_5.sqlite"]).unwrap();
+        let staged = Connection::open(staged).unwrap();
+        assert_eq!(
+            staged
+                .query_row("SELECT model_provider FROM threads", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            "custom"
+        );
+        assert_eq!(fs::read(&database).unwrap(), original_database);
+        assert_eq!(fs::read(&wal).unwrap(), original_wal);
+
+        let reader = open_codex_history_database(&database, "test")
+            .unwrap()
+            .unwrap();
+        assert!(reader.execute("DELETE FROM threads", []).is_err());
+        assert!(open_codex_history_database(&root.path().join("missing.sqlite"), "test").is_err());
+        assert!(!root.path().join("missing.sqlite").exists());
     }
 
     #[test]
