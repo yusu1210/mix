@@ -26,10 +26,14 @@ states this boundary instead of promising unsupported switching.
 
 ## Install on macOS
 
-Mix supports macOS 13 or later on Apple Silicon and Intel Macs. Download the
-architecture-matched DMG from this repository's Releases page, open it, and
-drag `mix.app` to Applications. Public release artifacts are Developer ID
-signed, notarized, and accompanied by `SHA256SUMS` and SBOM files.
+Mix targets macOS 13 or later on Apple Silicon and Intel Macs. There is no
+public binary release yet; use the source-build instructions below. Passing
+CI or a local ad-hoc signature is not evidence of completed release acceptance.
+
+When a release is available on the [Releases page](https://github.com/yusu1210/mix/releases),
+download the architecture-matched DMG, open it, and drag `mix.app` to
+Applications. Public releases must be Developer ID signed, notarized, and
+accompanied by `SHA256SUMS` and SBOM files.
 
 The optional CLI installer is named
 `mix_<version>_cli_<architecture>.pkg`. It installs the signed CLI bundle under
@@ -50,6 +54,16 @@ The build requires the exact Node version in `.nvmrc` and the pinned Rust
 toolchain. Local builds are ad-hoc signed development artifacts; they are not
 equivalent to notarized release downloads.
 
+From the repository root, open the completed local build with:
+
+```bash
+open .build/local-app/mix.app
+```
+
+No separate runtime installation is needed to open that bundle. The DMG is
+in `.build/local-artifacts/`. See [release requirements](docs/RELEASING.md)
+for the remaining signing and real-client acceptance gates.
+
 ## First use
 
 1. Open Mix and connect Codex.
@@ -60,6 +74,11 @@ equivalent to notarized release downloads.
 4. Select an account to switch. If the Codex desktop app is running, Mix closes
    and reopens that app once so the new credential and Provider route take
    effect together.
+
+Wait for running desktop tasks to finish before switching: restarting Codex
+interrupts those tasks. Preserving session history does not keep an in-flight
+request running. If a switch fails, copy the diagnostics from Settings; do
+not delete native history or repeatedly retry while work is running.
 
 The switch is validated, journaled, verified, and rolled back on failure.
 Existing session bodies, IDs, and locations stay in their native Codex

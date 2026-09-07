@@ -131,6 +131,7 @@ accepted asset set before the draft can become public.
      --codex /Applications/ChatGPT.app/Contents/Resources/codex \
      --output "$evidence_dir/client-compat-codex-provider.json"
 
+   # Run the Claude probe only in a disposable operating-system user or machine.
    cargo run --locked --package mix-release -- compatibility claude-config-dir \
      --claude /absolute/path/to/claude \
      --output "$evidence_dir/client-compat-claude-config-dir.json"
@@ -139,8 +140,10 @@ accepted asset set before the draft can become public.
    These disposable probes must pass for the exact client builds in the release
    matrix. The Codex probe binds a loopback-only fake Provider and a generated
    synthetic credential. The Claude probe uses separate temporary HOME and
-   `CLAUDE_CONFIG_DIR` roots with authentication environment variables removed.
-   Neither records credential values or replaces the real account/session
+   `CLAUDE_CONFIG_DIR` roots and a cleared process environment. This verifies
+   configuration-file placement, not system Keychain isolation; run it only in
+   a disposable operating-system user or machine. Neither probe records
+   credential values or replaces the real account/session
    continuity gates. Raw logs, screenshots, and local readiness reports stay
    outside Git; only the final sanitized acceptance record is committed.
    Then run `sh scripts/quality-gate.sh`,

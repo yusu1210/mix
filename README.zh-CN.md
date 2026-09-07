@@ -24,10 +24,13 @@ Claude 环境描述成完全隔离的 OAuth 账号，也不会承诺无法验证
 
 ## 在 macOS 安装
 
-Mix 支持 macOS 13 及以上版本，覆盖 Apple Silicon 和 Intel Mac。从本仓库
-Releases 页面下载架构匹配的 DMG，打开后将 `mix.app` 拖入 Applications。
-正式发布物会经过 Developer ID 签名和 Apple 公证，并附带 `SHA256SUMS` 与
-SBOM 文件。
+Mix 的目标平台为 macOS 13 及以上版本的 Apple Silicon 和 Intel Mac。目前
+尚无公开二进制 Release，请按下方说明从源码构建。CI 通过或本地 ad-hoc
+签名不代表正式发布验收已经完成。
+
+[Releases 页面](https://github.com/yusu1210/mix/releases)提供正式版本后，下载
+架构匹配的 DMG，打开后将 `mix.app` 拖入 Applications。正式发布物必须经过
+Developer ID 签名和 Apple 公证，并附带 `SHA256SUMS` 与 SBOM 文件。
 
 可选 CLI 安装包名为 `mix_<version>_cli_<architecture>.pkg`。它将签名后的
 CLI Bundle 安装到 `/Library/Application Support/Mix`，并创建
@@ -46,6 +49,16 @@ npm run build:desktop
 构建必须使用 `.nvmrc` 指定的 Node 版本和固定的 Rust 工具链。本地构建仅做
 ad-hoc 签名，不等同于已公证的正式发布物。
 
+构建完成后，在仓库根目录运行：
+
+```bash
+open .build/local-app/mix.app
+```
+
+该 App Bundle 可直接打开，无需另行安装运行时。DMG 位于
+`.build/local-artifacts/`。尚需完成的签名和真实客户端验收要求见
+[发布说明](docs/RELEASING.md)。
+
 ## 第一次使用
 
 1. 打开 Mix，连接 Codex。
@@ -53,6 +66,10 @@ ad-hoc 签名，不等同于已公证的正式发布物。
 3. 通过 Mix 的隔离官方登录流程添加另一个账号，或先在 Codex 登录后再添加。
 4. 点击账号即可切换。Codex 桌面端正在运行时，Mix 会关闭并重新打开一次，
    确保新凭证和 Provider 路由同时生效。
+
+请等待桌面端正在执行的任务结束后再切换：重启 Codex 会中断这些任务。
+保留会话历史不等于正在进行的请求能不中断。切换失败时，在设置中复制诊断
+信息，不要删除原生历史，也不要在任务运行时反复重试。
 
 切换过程包含前置校验、事务日志、结果验证与失败回滚。已有会话的正文、ID 和
 位置始终保留在 Codex 原生目录。跨 Provider 切换时，Mix 只会在同一可恢复

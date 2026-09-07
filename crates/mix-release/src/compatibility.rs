@@ -120,7 +120,8 @@ fn claude_config_dir(claude: &Path, timeout: Duration) -> Result<Value, String> 
         "isolation": {
             "disposable_home": true,
             "disposable_config_dir": true,
-            "real_credential_used": false,
+            "environment_authentication_cleared": true,
+            "keychain_isolation_verified": false,
             "home_state_unchanged": true
         },
         "observation": {
@@ -140,17 +141,9 @@ fn run_claude_status(
 ) -> Result<std::process::ExitStatus, String> {
     let stdout_file = fs::File::create(stdout)
         .map_err(|error| format!("cannot create Claude probe output: {error}"))?;
-    let mut child = ProcessCommand::new(claude)
+    let mut child = probe_command(claude, home)
         .args(["auth", "status", "--json"])
-        .current_dir(home)
-        .env("HOME", home)
         .env("CLAUDE_CONFIG_DIR", config)
-        .env_remove("ANTHROPIC_API_KEY")
-        .env_remove("ANTHROPIC_AUTH_TOKEN")
-        .env_remove("CLAUDE_CODE_OAUTH_TOKEN")
-        .env_remove("CLAUDE_CODE_USE_BEDROCK")
-        .env_remove("CLAUDE_CODE_USE_VERTEX")
-        .env_remove("CLAUDE_CODE_USE_FOUNDRY")
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout_file))
         .stderr(Stdio::null())
@@ -198,8 +191,22 @@ fn resolved_executable(path: &Path, client: &str) -> Result<PathBuf, String> {
     Ok(resolved)
 }
 
+fn probe_command(executable: &Path, home: &Path) -> ProcessCommand {
+    let mut command = ProcessCommand::new(executable);
+    // Probes must not inherit authentication, endpoint, proxy, or plugin state.
+    // PATH is retained for clients whose launcher needs a runtime such as Node.
+    command
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("HOME", home)
+        .current_dir(home);
+    command
+}
+
 fn client_version(executable: &Path, client: &str) -> Result<String, String> {
-    let output = ProcessCommand::new(executable)
+    let home = tempfile::tempdir()
+        .map_err(|error| format!("cannot create version probe home: {error}"))?;
+    let output = probe_command(executable, home.path())
         .arg("--version")
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -299,7 +306,7 @@ fn codex_version(codex: &Path) -> Result<String, String> {
 
 fn write_probe_home(home: &TempDir, port: u16, credential: &str) -> Result<(), String> {
     let config = format!(
-        "check_for_update_on_startup = false\nmodel = \"mix-probe\"\nmodel_provider = \"mix-probe\"\n\n[otel]\nexporter = \"none\"\ntrace_exporter = \"none\"\nmetrics_exporter = \"none\"\n\n[model_providers.mix-probe]\nname = \"Mix isolated probe\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+        "check_for_update_on_startup = false\ncli_auth_credentials_store = \"file\"\nmodel = \"mix-probe\"\nmodel_provider = \"mix-probe\"\n\n[otel]\nexporter = \"none\"\ntrace_exporter = \"none\"\nmetrics_exporter = \"none\"\n\n[model_providers.mix-probe]\nname = \"Mix isolated probe\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
     );
     fs::write(home.path().join("config.toml"), config)
         .map_err(|error| format!("cannot write probe config: {error}"))?;
@@ -310,7 +317,7 @@ fn write_probe_home(home: &TempDir, port: u16, credential: &str) -> Result<(), S
 }
 
 fn start_codex(codex: &Path, home: &TempDir) -> Result<Child, String> {
-    ProcessCommand::new(codex)
+    probe_command(codex, home.path())
         .args([
             "exec",
             "--strict-config",
@@ -321,8 +328,6 @@ fn start_codex(codex: &Path, home: &TempDir) -> Result<Child, String> {
             "never",
             "probe",
         ])
-        .current_dir(home.path())
-        .env("HOME", home.path())
         .env("CODEX_HOME", home.path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -455,6 +460,29 @@ mod tests {
     use super::*;
 
     #[cfg(unix)]
+    #[test]
+    fn probes_inherit_only_the_runtime_search_path() {
+        let home = tempfile::tempdir().unwrap();
+        let output = probe_command(Path::new("/usr/bin/env"), home.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let mut values = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        values.sort();
+        assert_eq!(
+            values,
+            vec![
+                format!("HOME={}", home.path().display()),
+                format!("PATH={}", std::env::var("PATH").unwrap_or_default()),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
     fn claude_fixture(script: &str) -> (TempDir, PathBuf) {
         use std::os::unix::fs::{symlink, PermissionsExt};
 
@@ -488,6 +516,8 @@ exit 1
 
         assert_eq!(report["result"], "pass");
         assert_eq!(report["observation"]["exit_code"], 1);
+        assert_eq!(report["isolation"]["keychain_isolation_verified"], false);
+        assert!(report["isolation"].get("real_credential_used").is_none());
         assert!(!serialized.contains("isolated-secret"));
         assert!(!serialized.contains("status-secret"));
     }

@@ -1,12 +1,14 @@
 # Platform support
 
-Mix publishes and supports macOS builds. Source code may compile elsewhere,
-but an untested build is not a supported distribution.
+Mix targets macOS builds. No public binary release is available yet. The
+table describes build targets, not completed clean-machine or client
+acceptance. Source code may compile elsewhere, but an untested build is not
+a supported distribution.
 
 | Platform | Mac App | CLI / Local Web | Release status |
 | --- | --- | --- | --- |
-| macOS 13+ Apple Silicon | Supported | Supported | Native signed and notarized release target |
-| macOS 13+ Intel | Supported | Supported | Native signed and notarized release target |
+| macOS 13+ Apple Silicon | Local build | Local build | Signing, notarization, and clean-machine acceptance required |
+| macOS 13+ Intel | Local build | Local build | Signing, notarization, and clean-machine acceptance required |
 | Linux | Not provided | Source builds only | No installer or compatibility guarantee |
 | Windows | Not provided | Not supported | No credential, process, or installer acceptance |
 
