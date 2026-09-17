@@ -6215,10 +6215,11 @@ multi_agent = true
     }
 
     #[test]
-    fn active_login_repair_refreshes_credential_identity_and_route_overlay() {
+    fn active_login_repair_refreshes_credential_without_adopting_another_route() {
         let root = tempfile::tempdir().unwrap();
         let live = root.path().join("codex");
         let stored = root.path().join("stored.toml");
+        let gateway_stored = root.path().join("gateway.toml");
         fs::create_dir_all(&live).unwrap();
         fs::write(
             live.join("config.toml"),
@@ -6232,6 +6233,11 @@ base_url = "https://company-b.example"
         )
         .unwrap();
         fs::write(&stored, "model = \"stale-model\"\n").unwrap();
+        fs::write(
+            &gateway_stored,
+            "model_provider = \"company-b\"\n[model_providers.company-b]\nbase_url = \"https://company-b.example\"\n",
+        )
+        .unwrap();
         let document = json!({
             "email":"fresh@example.com",
             "tokens":{"account_id":"account-a","access_token":"fresh"}
@@ -6246,13 +6252,24 @@ base_url = "https://company-b.example"
             service: "com.mix.test".into(),
             account: "account-a".into(),
         };
+        let gateway_reference = SecretRef {
+            service: "com.mix.test".into(),
+            account: "gateway".into(),
+        };
+        let gateway_auth = json!({"OPENAI_API_KEY":"gateway-key"});
         let vault = Arc::new(MemoryVault::default());
         vault.set(&reference, b"stale").unwrap();
+        vault
+            .set(
+                &gateway_reference,
+                &serde_json::to_vec(&gateway_auth).unwrap(),
+            )
+            .unwrap();
         let service =
             MixService::with_vault(root.path().join("mix/config.json"), vault.clone()).unwrap();
         service.initialize().unwrap();
         service
-            .register_client("codex", AdapterKind::Codex, live)
+            .register_client("codex", AdapterKind::Codex, live.clone())
             .unwrap();
         service
             .store
@@ -6265,6 +6282,19 @@ base_url = "https://company-b.example"
                         files: BTreeMap::from([("config.toml".into(), stored.clone())]),
                         secret_files: BTreeMap::from([("auth.json".into(), reference.clone())]),
                         account_fingerprint: Some(fingerprint),
+                        ..Profile::default()
+                    },
+                );
+                config.apps.get_mut("codex").unwrap().profiles.insert(
+                    "gateway".into(),
+                    Profile {
+                        label: "Gateway".into(),
+                        files: BTreeMap::from([("config.toml".into(), gateway_stored.clone())]),
+                        secret_files: BTreeMap::from([(
+                            "auth.json".into(),
+                            gateway_reference.clone(),
+                        )]),
+                        account_fingerprint: crate::CodexAdapter::fingerprint(&gateway_auth),
                         ..Profile::default()
                     },
                 );
@@ -6290,10 +6320,31 @@ base_url = "https://company-b.example"
         assert_eq!(profile.label, "Work");
         assert_eq!(profile.label_origin, ProfileLabelOrigin::User);
         let overlay = read_codex_config(&stored).unwrap();
-        assert_eq!(overlay["model_provider"].as_str(), Some("company-b"));
+        assert_eq!(overlay["model"].as_str(), Some("stale-model"));
+        assert!(overlay.get("model_provider").is_none());
+        assert!(overlay.get("model_providers").is_none());
+
+        // A native login can temporarily leave the previous route behind.
+        // Once its official route is restored, both switch directions must
+        // still project the credential and endpoint from the same profile.
+        fs::write(live.join("config.toml"), "model = \"official\"\n").unwrap();
+        service.switch("codex", "gateway").unwrap();
         assert_eq!(
-            overlay["model_providers"]["company-b"]["base_url"].as_str(),
-            Some("https://company-b.example")
+            crate::CodexAdapter::parse_auth(&live.join("auth.json")).unwrap(),
+            gateway_auth
+        );
+        assert_eq!(
+            provider_from_toml(&read_codex_config(&live.join("config.toml")).unwrap()).id,
+            "company-b"
+        );
+        service.switch("codex", "account-1").unwrap();
+        assert_eq!(
+            crate::CodexAdapter::parse_auth(&live.join("auth.json")).unwrap(),
+            document
+        );
+        assert_eq!(
+            provider_from_toml(&read_codex_config(&live.join("config.toml")).unwrap()).id,
+            "openai"
         );
     }
 

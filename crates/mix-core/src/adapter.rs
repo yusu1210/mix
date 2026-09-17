@@ -783,8 +783,30 @@ impl AccountCapture for CodexAdapter {
                 )
             })?
             .clone();
+        let captured_config = captured.files.get("config.toml").ok_or_else(|| {
+            Error::new(
+                ErrorCode::MixInternalError,
+                "captured Codex account has no configuration overlay",
+            )
+        })?;
+        let captured_config = std::str::from_utf8(captured_config)
+            .map_err(|_| Error::invalid("captured Codex configuration is not UTF-8"))?;
+        let captured_config = toml::from_str::<toml::Table>(captured_config)
+            .map_err(|_| Error::invalid("captured Codex configuration is invalid"))?;
+        let saved_config = client
+            .profiles
+            .get(profile)
+            .and_then(|profile| profile.files.get("config.toml"))
+            .ok_or_else(|| Error::invalid("saved Codex account has no configuration overlay"))?;
+        let saved_route = codex_route(&read_codex_config(saved_config)?);
+        let captured_route = codex_route(&captured_config);
         merge_codex_credential(vault, &reference, &captured.fingerprint, &document)?;
-        sync_live_codex_overlay(client, profile)?;
+        // A native login can change before its provider configuration (or vice
+        // versa). Refresh the matching credential, but never teach the saved
+        // account a different provider route from that transient pair.
+        if saved_route == captured_route {
+            sync_live_codex_overlay(client, profile)?;
+        }
         client
             .profiles
             .get_mut(profile)
@@ -1562,7 +1584,15 @@ fn sync_live_codex_overlay(client: &ClientConfig, profile: &str) -> Result<()> {
         .get(profile)
         .and_then(|profile| profile.files.get("config.toml"))
         .ok_or_else(|| Error::invalid("the active Codex account has no configuration overlay"))?;
-    let payload = codex_account_overlay_text(&client.live_dir.join("config.toml"))?;
+    let live = read_codex_config(&client.live_dir.join("config.toml"))?;
+    let saved = read_codex_config(source)?;
+    if codex_route(&live) != codex_route(&saved) {
+        return Err(Error::new(
+            ErrorCode::MixActiveAccountUnmanaged,
+            "the live Codex provider route changed while synchronizing the account",
+        ));
+    }
+    let payload = encode_codex_config(&codex_account_overlay(&live))?;
     atomic_write(source, payload.as_bytes())
 }
 
@@ -1756,11 +1786,11 @@ fn request_codex_oauth_refresh(
         })?;
     let response = client
         .post(endpoint)
-        .json(&serde_json::json!({
-            "client_id": CODEX_OAUTH_CLIENT_ID,
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-        }))
+        .form(&[
+            ("client_id", CODEX_OAUTH_CLIENT_ID),
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+        ])
         .send()
         .map_err(|_| {
             Error::new(
@@ -3399,9 +3429,10 @@ mod tests {
             let read = stream.read(&mut request).unwrap();
             let request = String::from_utf8_lossy(&request[..read]);
             assert!(request.starts_with("POST /token HTTP/1.1"));
-            assert!(request.contains("\"client_id\":\"app_EMoamEEZ73f0CkXaXp7hrann\""));
-            assert!(request.contains("\"grant_type\":\"refresh_token\""));
-            assert!(request.contains("\"refresh_token\":\"old-refresh\""));
+            assert!(request.contains("content-type: application/x-www-form-urlencoded"));
+            assert!(request.contains("client_id=app_EMoamEEZ73f0CkXaXp7hrann"));
+            assert!(request.contains("grant_type=refresh_token"));
+            assert!(request.contains("refresh_token=old-refresh"));
             let body = format!(
                 "{{\"access_token\":{},\"refresh_token\":\"new-refresh\"}}",
                 serde_json::to_string(&test_jwt("account-a")).unwrap()
