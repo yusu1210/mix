@@ -20,7 +20,7 @@ tauri = { version = "2.8.1", default-features = false, features = ["image-png", 
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = { version = "2", default-features = false }
 tauri-plugin-clipboard-manager = "2.3.2"
-tauri-plugin-updater = { version = "=2.11.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
+tauri-plugin-updater = { version = "=2.12.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
 mix-core = { path = "../../../crates/mix-core" }
 mix-server = { path = "../../../crates/mix-server" }
 serde.workspace = true
@@ -29,5 +29,5 @@ uuid.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-base64 = "0.22"
+base64 = "0.23"
 minisign-verify = "0.2.5"
