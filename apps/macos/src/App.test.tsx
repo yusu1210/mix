@@ -1366,13 +1366,15 @@ describe("Mix product shell", () => {
     expect(screen.queryByRole("dialog", { name: /切换到/ })).toBeNull();
   });
 
-  it("repairs through identity-checked native login without switching automatically", async () => {
+  it("continues the original switch once after identity-checked native login", async () => {
     const enrollmentId = "d".repeat(32);
+    let attempts = 0;
     mocks.request.mockImplementation(async (path: string, init?: RequestInit) => {
       if (path === "/api/state") return structuredClone(snapshot);
       if (path === "/api/discovery") return [];
       if (path.startsWith("/api/sessions")) return [];
       if (path === "/api/switch") {
+        if (++attempts === 2) return { status: "switched", restarted: true };
         throw new ApiError("private credential reference must not be displayed", "MIX_ACCOUNT_REAUTH_REQUIRED", { app: "codex", profile: "team" });
       }
       if (path === "/api/accounts/repair/active-login" && init?.method === "POST") {
@@ -1404,12 +1406,12 @@ describe("Mix product shell", () => {
 
     const enrollmentCall = mocks.request.mock.calls.find(([path]) => path === "/api/accounts/enroll");
     expect(JSON.parse(String((enrollmentCall?.[1] as RequestInit).body))).toEqual({ app: "codex", repair_profile: "team" });
-    expect(mocks.request.mock.calls.filter(([path]) => path === "/api/switch")).toHaveLength(1);
+    expect(mocks.request.mock.calls.filter(([path]) => path === "/api/switch")).toHaveLength(2);
     expect(document.body.textContent).not.toContain("private credential reference");
-    expect(await screen.findByRole("status")).toHaveProperty("textContent", "账号登录已修复；再次点击即可切换");
+    expect(await screen.findByRole("status")).toHaveProperty("textContent", "切换完成，已重新打开客户端；原生会话仍保留");
   });
 
-  it("repairs from the matching active login without switching or opening login", async () => {
+  it("retries after local repair only once without opening login in a loop", async () => {
     mocks.request.mockImplementation(async (path: string, init?: RequestInit) => {
       if (path === "/api/state") return structuredClone(snapshot);
       if (path === "/api/discovery") return [];
@@ -1428,8 +1430,9 @@ describe("Mix product shell", () => {
     const teamRow = screen.getAllByRole("article").find((row) => row.textContent?.includes("Team"));
     fireEvent.click(within(teamRow as HTMLElement).getByRole("button", { name: "切换到此账号" }));
 
-    await waitFor(() => expect(screen.getByRole("status")).toHaveProperty("textContent", "已使用当前 Codex 的同一账号登录修复凭证；未切换当前账号"));
-    expect(mocks.request.mock.calls.filter(([path]) => path === "/api/switch")).toHaveLength(1);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveProperty("textContent", "需要重新验证此账号"));
+    expect(mocks.request.mock.calls.filter(([path]) => path === "/api/switch")).toHaveLength(2);
+    expect(mocks.request.mock.calls.filter(([path]) => path === "/api/accounts/repair/active-login")).toHaveLength(1);
     expect(mocks.request.mock.calls.some(([path]) => path === "/api/accounts/enroll")).toBe(false);
   });
 

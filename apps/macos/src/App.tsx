@@ -20,7 +20,7 @@ import type { Activity, Client, ClientIssue, CredentialStoreCapability, DialogSt
 
 type Translate = ReturnType<typeof createTranslator>;
 type Toast = { message: string; tone: "success" | "warning" | "error" | "neutral" } | null;
-type OperationResult = { restart_warning?: string; activity_warning?: string; warnings?: string[]; warning?: string; status?: string };
+type OperationResult = { restart_warning?: string; activity_warning?: string; warnings?: string[]; warning?: string; status?: string; restarted?: boolean };
 type EnrollmentResult = { enrollment_id: string; state: "pending" | "completed" | "failed"; mode?: "repair"; profile?: string; repair_profile?: string; label?: string; error?: string; code?: string };
 type LocalRepairResult = { repaired: boolean; status?: "already_ready"; source?: "active_login" };
 type UpdatePhase = "idle" | "checking" | "available";
@@ -766,8 +766,8 @@ export default function App() {
     }
   }
 
-  async function enrollAccount(app: string, repairProfile?: string) {
-    if (enrollmentInFlight.current) return;
+  async function enrollAccount(app: string, repairProfile?: string, resumeSwitch = false): Promise<boolean> {
+    if (enrollmentInFlight.current) return false;
     enrollmentInFlight.current = true;
     try {
       if (repairProfile) {
@@ -780,15 +780,15 @@ export default function App() {
           if (localRepair.repaired || localRepair.status === "already_ready") {
             setDialog(null);
             await load(true);
-            notify(t("accountRepairedLocally"));
-            return;
+            if (!resumeSwitch) notify(t("accountRepairedLocally"));
+            return true;
           }
         } catch (error) {
           if (!(error instanceof ApiError) || error.code !== "MIX_ACCOUNT_LOCAL_REPAIR_UNAVAILABLE") throw error;
           const destination = snapshot.apps.find((item) => item.name === app)?.profiles.find((item) => item.name === repairProfile);
           if (destination?.provider?.official === false) {
             notify(t("customAccountRepairUnavailable"), "error");
-            return;
+            return false;
           }
         }
       }
@@ -805,11 +805,11 @@ export default function App() {
         if (status.state === "completed") {
           await load(true);
           const message = t(repairProfile ? "accountRepaired" : "accountAdded");
-          notify(
+          if (!resumeSwitch) notify(
             status.error ? `${message} · ${t("operationCompletedWithWarning")}` : message,
             status.error ? "warning" : "success",
           );
-          return;
+          return true;
         }
         if (status.state === "failed") {
           if (status.code === "MIX_ACCOUNT_REPAIR_IDENTITY_MISMATCH") throw new Error(t("accountRepairIdentityMismatch"));
@@ -821,6 +821,7 @@ export default function App() {
       throw new Error(t("enrollmentTimedOut"));
     } catch (error) {
       notify(localizedFailureMessage(error, t, t(repairProfile ? "accountRepairFailed" : "enrollmentFailed")), "error");
+      return false;
     } finally {
       enrollmentInFlight.current = false;
     }
@@ -962,7 +963,16 @@ export default function App() {
     setSwitchingTarget(`${app}/${profile}`);
     setBusy(true);
     try {
-      const result = await request<OperationResult>("/api/switch", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ app, profile }) });
+      const attemptSwitch = () => request<OperationResult>("/api/switch", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ app, profile }) });
+      let result: OperationResult;
+      try {
+        result = await attemptSwitch();
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.code !== "MIX_ACCOUNT_REAUTH_REQUIRED") throw error;
+        if (!await enrollAccount(app, profile, true)) return;
+        // Continue the user's original action once, never loop back into login.
+        result = await attemptSwitch();
+      }
       setDialog(null);
       await load(true);
       if (pending?.kind === "project" && pending.app === app && pending.profile === profile) {
@@ -998,13 +1008,10 @@ export default function App() {
       const completed = environmentSelection
         ? t("environmentSelected")
         : clientCapabilityAvailable(client, "process.control")
-          ? t(result.status === "already_active" ? "clientOpened" : "switchCompletedAndClientOpened")
+          ? t(result.status === "already_active" ? "clientOpened" : result.restarted === false ? "switchCompletedOpenManually" : "switchCompletedAndClientOpened")
           : t("switchCompleted");
       notify(warning ? `${completed} · ${t("operationCompletedWithWarning")}` : completed, warning ? "warning" : "success");
     } catch (error) {
-      if (error instanceof ApiError && error.code === "MIX_ACCOUNT_REAUTH_REQUIRED") {
-        await enrollAccount(app, profile);
-      } else {
         const summary = localizedFailureMessage(error, t, t("unknownError"));
         const restoredProfile = error instanceof ApiError && error.code === "MIX_SWITCH_ROLLED_BACK"
           ? error.details.from_profile
@@ -1020,7 +1027,6 @@ export default function App() {
             : summary,
           "error",
         );
-      }
     } finally {
       switchInFlight.current = false;
       setSwitchingTarget(null);
@@ -1208,7 +1214,7 @@ export default function App() {
       credentialStoreAvailable={credentialStore.available}
       onClose={() => { if (!busy) setDialog(null); }}
       onCreate={createProfile}
-      onEnroll={enrollAccount}
+      onEnroll={async (app) => { await enrollAccount(app); }}
     />}
     {dialog?.kind === "profile-edit" && <ProfileEditDialog
       t={t}

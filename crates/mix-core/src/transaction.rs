@@ -1,6 +1,6 @@
 use crate::fs::{
-    atomic_json, atomic_write, private_scoped_dir, read_bounded, remove_durable, safe_child,
-    validate_scoped_path, MAX_LOCAL_JSON_BYTES,
+    atomic_copy, atomic_json, atomic_write, private_scoped_dir, read_bounded, remove_durable,
+    safe_child, validate_scoped_path, MAX_LOCAL_JSON_BYTES,
 };
 use crate::{CredentialVault, Error, ErrorCode, Profile, Result, SecretRef};
 use serde::{Deserialize, Serialize};
@@ -141,10 +141,8 @@ impl SwitchJournal {
                 let live = safe_child(plan.live_dir, &relative)?;
                 let existed = existing_regular_file(&live)?;
                 if existed {
-                    let payload =
-                        read_bounded(&live, 16 * 1024 * 1024, "cannot back up live client file")?;
                     let backup = safe_child(&backup_dir, &format!("files/{relative}"))?;
-                    atomic_write(&backup, &payload)?;
+                    atomic_copy(&live, &backup)?;
                 }
                 let target = if plan.file_removals.contains(&relative) {
                     if plan.file_overrides.contains_key(&relative)
@@ -280,9 +278,7 @@ impl SwitchJournal {
             let live = safe_child(&self.live_dir, &mutation.relative)?;
             match &mutation.target {
                 Some(source) => {
-                    let payload =
-                        read_bounded(source, 16 * 1024 * 1024, "cannot read account file")?;
-                    atomic_write(&live, &payload)?;
+                    atomic_copy(source, &live)?;
                 }
                 None => remove_durable(&live)?,
             }
@@ -318,9 +314,7 @@ impl SwitchJournal {
                 let live = safe_child(&self.live_dir, &mutation.relative)?;
                 if mutation.existed {
                     let backup = safe_child(&backup_dir, &format!("files/{}", mutation.relative))?;
-                    let payload =
-                        read_bounded(&backup, 16 * 1024 * 1024, "cannot read switch backup")?;
-                    atomic_write(&live, &payload)
+                    atomic_copy(&backup, &live)
                 } else {
                     remove_durable(&live)
                 }
@@ -725,6 +719,43 @@ mod tests {
     use super::*;
     use crate::vault::MemoryVault;
     use std::fs;
+
+    #[test]
+    fn large_sidecar_is_backed_up_and_recovered_after_journal_reload() {
+        let root = tempfile::tempdir().unwrap();
+        let live = root.path().join("live");
+        fs::create_dir_all(&live).unwrap();
+        let relative = "state_5.sqlite-wal";
+        let original = vec![0x5a; 17 * 1024 * 1024];
+        fs::write(live.join(relative), &original).unwrap();
+        let vault = MemoryVault::default();
+        let target = Profile::default();
+        let journal = SwitchJournal::prepare(
+            root.path(),
+            SwitchPlan {
+                app: "codex",
+                live_dir: &live,
+                from_name: None,
+                from: None,
+                to_name: "target",
+                to: &target,
+                file_overrides: BTreeMap::new(),
+                file_removals: BTreeSet::from([relative.into()]),
+                file_rewrites: Vec::new(),
+                restart_required: false,
+            },
+            &vault,
+        )
+        .unwrap();
+        journal.apply(&vault).unwrap();
+        assert!(!live.join(relative).exists());
+        drop(journal);
+        let journal = SwitchJournal::load(root.path()).unwrap().unwrap();
+        journal.restore(root.path(), &vault).unwrap();
+        assert_eq!(fs::read(live.join(relative)).unwrap(), original);
+        journal.cleanup_after_restore(root.path(), &vault).unwrap();
+        assert!(SwitchJournal::load(root.path()).unwrap().is_none());
+    }
 
     #[test]
     fn variable_width_token_rewrites_are_idempotent_for_prefix_names() {

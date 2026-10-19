@@ -218,6 +218,39 @@ impl MixService {
         self.vault.capability()
     }
 
+    /// Save native login rotations while idle. Never refresh, switch, or touch
+    /// client files, and never observe a half-applied Mix transaction.
+    pub fn synchronize_native_logins(&self) -> Result<()> {
+        let Some(local) = self.mutation.try_lock() else {
+            return Ok(());
+        };
+        let root = self.store.root()?;
+        let cross_process = open_lock(&root.join(".mix-resource.lock"))?;
+        match cross_process.try_lock_exclusive() {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+            Err(error) => return Err(Error::io("cannot lock Mix resources", error)),
+        }
+        let _guard = MutationGuard {
+            _local: local,
+            _cross_process: cross_process,
+        };
+        let config = self.store.load()?;
+        if SwitchJournal::path(&config.root).exists() {
+            return Ok(());
+        }
+        for client in config.apps.values() {
+            if let Some(projection) = self
+                .adapters
+                .get(client.adapter)
+                .global_account_projection()
+            {
+                projection.synchronize_credentials(client, self.vault.as_ref())?;
+            }
+        }
+        Ok(())
+    }
+
     fn process_controller(&self, client: &ClientConfig) -> ProcessController {
         ProcessController::new(self.adapters.get(client.adapter).desktop_process(client))
     }
@@ -981,6 +1014,7 @@ impl MixService {
                     "stage": stage,
                     "error_code": error.code.as_str(),
                     "version": env!("CARGO_PKG_VERSION"),
+                    "diagnostic": switch_failure_diagnostic(error),
                 }),
             );
         }
@@ -1032,6 +1066,8 @@ impl MixService {
                 });
                 return Ok(());
             };
+            *stage = "synchronize_credentials";
+            global_account.synchronize_credentials(client, self.vault.as_ref())?;
             let source = global_account.switch_source(client)?;
             if source.as_deref() == Some(profile.as_str()) {
                 *stage = "synchronize_current";
@@ -1095,13 +1131,19 @@ impl MixService {
             journal.apply(self.vault.as_ref())?;
             *stage = "verify_projection";
             global_account.verify_projection(client, &target)?;
-            *stage = "restart_client";
+            let mut warning = None;
             let restarted = if restart_required {
-                controller.start()?
+                match controller.start() {
+                    Ok(started) => started,
+                    Err(error) => {
+                        warning = Some(format!("account switched, but the client could not be confirmed ready; open it manually: {error}"));
+                        false
+                    }
+                }
             } else {
                 false
             };
-            if restarted {
+            if restart_required {
                 *stage = "verify_restart";
                 global_account.verify_stable_projection(client, &target)?;
             }
@@ -1116,7 +1158,7 @@ impl MixService {
                 backup: journal.backup_dir(&config.root).display().to_string(),
                 stopped_pids: stopped,
                 restarted,
-                warning: None,
+                warning,
             });
             Ok(())
         });
@@ -2641,6 +2683,39 @@ fn codex_auth_kind(client: &ClientConfig) -> &'static str {
     "unknown"
 }
 
+fn switch_failure_diagnostic(error: &Error) -> Value {
+    let mut result = serde_json::Map::new();
+    if let Some(status) = error
+        .details
+        .get("http_status")
+        .and_then(Value::as_u64)
+        .filter(|value| (100..=599).contains(value))
+    {
+        result.insert("http_status".into(), json!(status));
+    }
+    if let Some(code) = error
+        .details
+        .get("oauth_code")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            matches!(
+                *value,
+                "invalid_grant"
+                    | "refresh_token_expired"
+                    | "refresh_token_reused"
+                    | "refresh_token_invalidated"
+                    | "invalid_client"
+                    | "invalid_request"
+                    | "server_error"
+                    | "temporarily_unavailable"
+            )
+        })
+    {
+        result.insert("oauth_code".into(), json!(code));
+    }
+    Value::Object(result)
+}
+
 fn stop_before_recovery(controller: &ProcessController) -> Result<()> {
     controller.stop().map(|_| ()).map_err(|error| {
         Error::new(
@@ -4135,6 +4210,167 @@ mod tests {
             Arc::new(MemoryVault::default()),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn native_login_capture_preserves_routes_and_never_replaces_newer_tokens() {
+        let root = tempfile::tempdir().unwrap();
+        let service = service(root.path());
+        let live = root.path().join("native");
+        fs::create_dir_all(&live).unwrap();
+        service
+            .register_client("codex", AdapterKind::Codex, live.clone())
+            .unwrap();
+        let saved_config = root.path().join("official.toml");
+        fs::write(&saved_config, "model_provider = \"openai\"\n").unwrap();
+        fs::write(live.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+        let auth = |account: &str, day: &str| {
+            json!({
+                "auth_mode":"chatgpt", "last_refresh":format!("2026-10-{day}T00:00:00Z"),
+                "tokens":{"account_id":account,"access_token":format!("access-{day}"),"refresh_token":format!("refresh-{day}")}
+            })
+        };
+        let reference = SecretRef {
+            service: "test".into(),
+            account: "a".into(),
+        };
+        service
+            .vault
+            .set(&reference, &serde_json::to_vec(&auth("a", "01")).unwrap())
+            .unwrap();
+        service
+            .store
+            .mutate(|config| {
+                config.apps.get_mut("codex").unwrap().profiles.insert(
+                    "a".into(),
+                    Profile {
+                        label: "Account A".into(),
+                        files: BTreeMap::from([("config.toml".into(), saved_config.clone())]),
+                        secret_files: BTreeMap::from([("auth.json".into(), reference.clone())]),
+                        account_fingerprint: CodexAdapter::fingerprint(&auth("a", "01")),
+                        ..Profile::default()
+                    },
+                );
+                Ok(())
+            })
+            .unwrap();
+        let config_before = fs::read(service.config_path()).unwrap();
+        let fresh = serde_json::to_vec(&auth("a", "19")).unwrap();
+        fs::write(live.join("auth.json"), &fresh).unwrap();
+        // An in-flight operation must not be observed by the background sampler.
+        let guard = service.lock_mutation().unwrap();
+        service.synchronize_native_logins().unwrap();
+        assert_ne!(service.vault.get(&reference).unwrap(), fresh);
+        drop(guard);
+        service.synchronize_native_logins().unwrap();
+        assert_eq!(service.vault.get(&reference).unwrap(), fresh);
+        for document in [auth("a", "02"), auth("b", "20")] {
+            fs::write(
+                live.join("auth.json"),
+                serde_json::to_vec(&document).unwrap(),
+            )
+            .unwrap();
+            service.synchronize_native_logins().unwrap();
+            assert_eq!(service.vault.get(&reference).unwrap(), fresh);
+        }
+        fs::write(live.join("auth.json"), b"{").unwrap();
+        service.synchronize_native_logins().unwrap();
+        assert_eq!(service.vault.get(&reference).unwrap(), fresh);
+        assert_eq!(fs::read(service.config_path()).unwrap(), config_before);
+        assert_eq!(
+            fs::read_to_string(saved_config).unwrap(),
+            "model_provider = \"openai\"\n"
+        );
+        assert_eq!(
+            fs::read_to_string(live.join("config.toml")).unwrap(),
+            "model_provider = \"custom\"\n"
+        );
+    }
+
+    #[test]
+    fn failure_diagnostic_keeps_only_allowlisted_oauth_fields() {
+        let error = Error::new(ErrorCode::MixAccountReauthRequired, "private response")
+            .details(json!({"http_status":401,"oauth_code":"refresh_token_reused","token":"private","path":"private"}));
+        assert_eq!(
+            switch_failure_diagnostic(&error),
+            json!({"http_status":401,"oauth_code":"refresh_token_reused"})
+        );
+        let error = error.details(json!({"http_status":999,"oauth_code":"private_secret"}));
+        assert_eq!(switch_failure_diagnostic(&error), json!({}));
+    }
+
+    #[test]
+    fn launch_failure_keeps_verified_target_instead_of_reverting_its_login() {
+        let root = tempfile::tempdir().unwrap();
+        let live = root.path().join("native");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("route.txt"), b"route-a").unwrap();
+        fs::write(live.join("credential.bin"), b"credential-a").unwrap();
+        let mut service = service(root.path());
+        service.adapters.replace(
+            AdapterKind::Codex,
+            Box::new(FixtureGlobalAdapter {
+                process: crate::ProcessSpec {
+                    executable: Some(root.path().join("not-running")),
+                    launch: vec![root.path().join("missing-launcher").display().to_string()],
+                    ready_timeout: 1,
+                    ..Default::default()
+                },
+                preflight_failure: false,
+            }),
+        );
+        service
+            .register_client("fixture", AdapterKind::Codex, live.clone())
+            .unwrap();
+        let mut profiles = BTreeMap::new();
+        for name in ["a", "b"] {
+            let route = root.path().join(format!("{name}.txt"));
+            fs::write(&route, format!("route-{name}")).unwrap();
+            let reference = SecretRef {
+                service: "test".into(),
+                account: name.into(),
+            };
+            service
+                .vault
+                .set(&reference, format!("credential-{name}").as_bytes())
+                .unwrap();
+            profiles.insert(
+                name.into(),
+                Profile {
+                    label: name.into(),
+                    files: BTreeMap::from([("route.txt".into(), route)]),
+                    secret_files: BTreeMap::from([("credential.bin".into(), reference)]),
+                    ..Profile::default()
+                },
+            );
+        }
+        service
+            .store
+            .mutate(|config| {
+                let client = config.apps.get_mut("fixture").unwrap();
+                client.profiles = profiles;
+                client.active_profile = Some("a".into());
+                Ok(())
+            })
+            .unwrap();
+        let outcome = service.switch("fixture", "b").unwrap();
+        assert!(!outcome.restarted);
+        assert!(outcome.warning.unwrap().contains("open it manually"));
+        assert_eq!(outcome.to_profile, "b");
+        assert_eq!(fs::read(live.join("route.txt")).unwrap(), b"route-b");
+        assert_eq!(
+            fs::read(live.join("credential.bin")).unwrap(),
+            b"credential-b"
+        );
+        assert_eq!(
+            service.store.load().unwrap().apps["fixture"]
+                .active_profile
+                .as_deref(),
+            Some("b")
+        );
+        assert!(SwitchJournal::load(service.store.root().unwrap())
+            .unwrap()
+            .is_none());
     }
 
     #[test]

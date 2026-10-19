@@ -181,6 +181,10 @@ pub trait AccountEnrollment: Send + Sync {
 /// global to a running desktop process. Core owns the transaction and process
 /// lifecycle; the adapter owns how native files form one coherent projection.
 pub trait GlobalAccountProjection: Send + Sync {
+    /// Capture native token rotation without changing routes or refreshing tokens.
+    fn synchronize_credentials(&self, _: &ClientConfig, _: &dyn CredentialVault) -> Result<()> {
+        Ok(())
+    }
     fn switch_source(&self, client: &ClientConfig) -> Result<Option<String>>;
     fn validate_target_credential(
         &self,
@@ -862,6 +866,39 @@ impl AccountEnrollment for CodexAdapter {
 }
 
 impl GlobalAccountProjection for CodexAdapter {
+    fn synchronize_credentials(
+        &self,
+        client: &ClientConfig,
+        vault: &dyn CredentialVault,
+    ) -> Result<()> {
+        let Ok(document) = Self::auth_document(client) else {
+            // Native sign-in may temporarily remove or replace auth.json.
+            return Ok(());
+        };
+        let Some(fingerprint) = Self::fingerprint(&document) else {
+            return Ok(());
+        };
+        if document.get("auth_mode").and_then(Value::as_str) != Some("chatgpt") {
+            return Ok(());
+        }
+        if ["access_token", "refresh_token"].iter().any(|key| {
+            !document
+                .pointer(&format!("/tokens/{key}"))
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+        }) {
+            return Ok(());
+        }
+        validate_codex_token_accounts(&document)?;
+        for profile in client.profiles.values() {
+            if profile.account_fingerprint.as_deref() == Some(&fingerprint) {
+                if let Some(reference) = profile.secret_files.get("auth.json") {
+                    merge_codex_credential(vault, reference, &fingerprint, &document)?;
+                }
+            }
+        }
+        Ok(())
+    }
     fn switch_source(&self, client: &ClientConfig) -> Result<Option<String>> {
         codex_switch_source(self.account_capability(client))
     }
@@ -2390,26 +2427,35 @@ fn codex_desktop_process_for(
     if app.extension().and_then(|value| value.to_str()) != Some("app") {
         return None;
     }
-    let ready_executable = app.join("Contents/Resources/codex");
     let app = app.display().to_string();
     Some(ProcessSpec {
         managed_executables: vec![executable.clone()],
         executable: Some(executable),
-        ready_executable: Some(ready_executable),
+        // Desktop login/update screens may not start the CLI worker. Opening
+        // the app is complete when its main process is running.
+        ready_executable: None,
         grace_seconds: 8,
         launch: vec!["/usr/bin/open".into(), "-a".into(), app.clone()],
         activate: vec!["/usr/bin/open".into(), "-a".into(), app],
-        ready_timeout: 12,
+        ready_timeout: 30,
     })
 }
 
 pub fn discover_executable(client: &ClientConfig) -> Option<PathBuf> {
     let value = client.run.command.first()?;
     let path = Path::new(value);
-    if path.is_absolute() {
-        return path.is_file().then(|| path.to_path_buf());
-    }
     let home = dirs::home_dir()?;
+    if path.is_absolute() {
+        if path.is_file() {
+            return Some(path.to_path_buf());
+        }
+        if client.adapter == AdapterKind::Codex && is_legacy_codex_desktop_path(path) {
+            return codex_desktop_executables(&home)
+                .into_iter()
+                .find(|candidate| candidate.is_file());
+        }
+        return None;
+    }
     let candidates = std::env::var_os("PATH")
         .into_iter()
         .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
@@ -2418,10 +2464,25 @@ pub fn discover_executable(client: &ClientConfig) -> Option<PathBuf> {
             PathBuf::from("/usr/local/bin"),
             home.join(".local/bin"),
             PathBuf::from("/Applications/ChatGPT.app/Contents/Resources"),
+            PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin"),
             home.join("Applications/ChatGPT.app/Contents/Resources"),
+            home.join("Applications/ChatGPT.app/Contents/Resources/codex-cli/bin"),
         ])
         .map(|root| root.join(value));
     candidates.into_iter().find(|path| path.is_file())
+}
+
+fn is_legacy_codex_desktop_path(path: &Path) -> bool {
+    path.ends_with("ChatGPT.app/Contents/Resources/codex")
+}
+
+fn codex_desktop_executables(home: &Path) -> Vec<PathBuf> {
+    vec![
+        PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"),
+        home.join("Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"),
+        PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex"),
+        home.join("Applications/ChatGPT.app/Contents/Resources/codex"),
+    ]
 }
 
 fn configured_command(client: &ClientConfig) -> Result<Vec<String>> {
@@ -3701,7 +3762,9 @@ mod tests {
         let connection = Connection::open(&database).unwrap();
         connection
             .execute_batch(
-                "CREATE TABLE threads (rollout_path TEXT NOT NULL, model_provider TEXT);",
+                "CREATE TABLE threads (rollout_path TEXT NOT NULL, model_provider TEXT);
+                 CREATE TABLE preserved_content (payload BLOB);
+                 INSERT INTO preserved_content VALUES (zeroblob(18 * 1024 * 1024));",
             )
             .unwrap();
         connection
@@ -3711,6 +3774,8 @@ mod tests {
             )
             .unwrap();
         drop(connection);
+        assert!(fs::metadata(&database).unwrap().len() > 16 * 1024 * 1024);
+        let original_database = fs::read(&database).unwrap();
         fs::write(live.join("state_5.sqlite-wal"), b"sidecar").unwrap();
 
         let client = ClientConfig {
@@ -3763,6 +3828,14 @@ mod tests {
             .query_row("SELECT model_provider FROM threads", [], |row| row.get(0))
             .unwrap();
         assert_eq!(provider, "enterprise-gateway");
+        let preserved: bool = connection
+            .query_row(
+                "SELECT payload = zeroblob(18 * 1024 * 1024) FROM preserved_content",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(preserved);
         assert!(!live.join("state_5.sqlite-wal").exists());
         let switched = fs::read(&rollout).unwrap();
         assert!(String::from_utf8(switched.clone())
@@ -3778,6 +3851,7 @@ mod tests {
             .query_row("SELECT model_provider FROM threads", [], |row| row.get(0))
             .unwrap();
         assert_eq!(provider, "openai");
+        assert_eq!(fs::read(&database).unwrap(), original_database);
         assert_eq!(fs::read(&rollout).unwrap(), original);
         assert_eq!(
             fs::read(live.join("state_5.sqlite-wal")).unwrap(),
@@ -4029,10 +4103,8 @@ mod tests {
         let process = codex_desktop_process_for(&client, root.path(), executable.clone()).unwrap();
         let app = root.path().join("ChatGPT.app").display().to_string();
         assert_eq!(process.managed_executables, [executable]);
-        assert_eq!(
-            process.ready_executable,
-            Some(root.path().join("ChatGPT.app/Contents/Resources/codex"))
-        );
+        assert_eq!(process.ready_executable, None);
+        assert_eq!(process.ready_timeout, 30);
         assert_eq!(process.launch, ["/usr/bin/open", "-a", &app]);
         assert_eq!(process.activate, ["/usr/bin/open", "-a", &app]);
     }

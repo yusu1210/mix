@@ -431,7 +431,8 @@ const zh = {
     "无法刷新目标账号的登录状态；当前账号没有改变。请检查网络后重试。",
   repairLoginStarted:
     "当前登录不是该账号，已打开 Codex 官方登录；请登录同一个账号",
-  accountRepaired: "账号登录已修复；再次点击即可切换",
+  accountRepaired: "账号登录已修复",
+  switchCompletedOpenManually: "账号已切换；客户端尚未确认启动，请手动打开",
   accountRepairedLocally:
     "已使用当前 Codex 的同一账号登录修复凭证；未切换当前账号",
   customAccountRepairUnavailable:
@@ -938,7 +939,8 @@ const en: Record<keyof typeof zh, string> = {
   repairLoginStarted:
     "The active login is not this account, so Codex official sign-in opened. Sign in to the same account",
   accountRepaired:
-    "Account login repaired. Click it again to switch",
+    "Account login repaired.",
+  switchCompletedOpenManually: "Account switched; client startup is not confirmed. Open it manually.",
   accountRepairedLocally:
     "Credential repaired from the active Codex login for the same account; current account unchanged",
   customAccountRepairUnavailable:

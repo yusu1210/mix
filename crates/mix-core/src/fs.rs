@@ -172,14 +172,25 @@ fn open_regular_file(path: &Path, label: &'static str) -> Result<File> {
 }
 
 pub fn atomic_write(path: &Path, value: &[u8]) -> Result<()> {
+    atomic_replace(path, |file| file.write_all(value))
+}
+
+/// Copy transaction artifacts without loading growing history files into memory.
+pub fn atomic_copy(source: &Path, destination: &Path) -> Result<()> {
+    let mut source = open_regular_file(source, "cannot open file for copying")?;
+    atomic_replace(destination, |file| {
+        std::io::copy(&mut source, file).map(|_| ())
+    })
+}
+
+fn atomic_replace(path: &Path, write: impl FnOnce(&mut File) -> std::io::Result<()>) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| Error::invalid("managed file has no parent"))?;
     private_dir(parent)?;
     let mut temp = tempfile::NamedTempFile::new_in(parent)
         .map_err(|error| Error::io("cannot create temporary file", error))?;
-    temp.write_all(value)
-        .map_err(|error| Error::io("cannot write temporary file", error))?;
+    write(temp.as_file_mut()).map_err(|error| Error::io("cannot write temporary file", error))?;
     temp.as_file()
         .sync_all()
         .map_err(|error| Error::io("cannot flush temporary file", error))?;
@@ -274,6 +285,41 @@ mod tests {
         atomic_write(&path, b"first").unwrap();
         atomic_write(&path, b"second").unwrap();
         assert_eq!(fs::read(path).unwrap(), b"second");
+    }
+
+    #[test]
+    fn failed_atomic_replace_preserves_destination() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("value");
+        fs::write(&path, b"original").unwrap();
+        assert!(atomic_replace(&path, |file| {
+            file.write_all(b"partial")?;
+            Err(std::io::Error::other("simulated copy failure"))
+        })
+        .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_copy_rejects_symlink_source_and_protects_destination() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let link = root.path().join("link");
+        let destination = root.path().join("destination");
+        fs::write(&source, b"new").unwrap();
+        fs::write(&destination, b"old").unwrap();
+        symlink(&source, &link).unwrap();
+        assert!(atomic_copy(&link, &destination).is_err());
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        atomic_copy(&source, &destination).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"new");
+        assert_eq!(
+            fs::metadata(&destination).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]

@@ -166,9 +166,20 @@ pub async fn start(
         .map_err(|error| Error::io("cannot inspect Mix local service", error))?;
     let (shutdown, receiver) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
+        let login_service = service.clone();
         let result = axum::serve(listener, router(service, token, ui_root))
             .with_graceful_shutdown(async move {
-                let _ = receiver.await;
+                let mut receiver = receiver;
+                loop {
+                    let service = login_service.clone();
+                    let _ =
+                        tokio::task::spawn_blocking(move || service.synchronize_native_logins())
+                            .await;
+                    tokio::select! {
+                        _ = &mut receiver => break,
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {}
+                    }
+                }
             })
             .await;
         if let Err(error) = result {
@@ -922,6 +933,71 @@ mod tests {
         let response = String::from_utf8(response).expect("HTTP response");
         assert!(response.starts_with("HTTP/1.1 401"), "{response}");
         assert!(!response.contains("visual interface"), "{response}");
+    }
+
+    #[tokio::test]
+    async fn running_server_captures_native_token_rotation_without_an_api_request() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("mix");
+        let live = directory.path().join("native");
+        std::fs::create_dir_all(&live).unwrap();
+        std::fs::write(live.join("config.toml"), "").unwrap();
+        let auth = |day: &str| {
+            json!({
+                "auth_mode":"chatgpt", "last_refresh":format!("2026-10-{day}T00:00:00Z"),
+                "tokens":{"account_id":"test-account","access_token":format!("access-{day}"),"refresh_token":format!("refresh-{day}")}
+            })
+        };
+        std::fs::write(
+            live.join("auth.json"),
+            serde_json::to_vec(&auth("01")).unwrap(),
+        )
+        .unwrap();
+        let service = Arc::new(MixService::new(root.join("config.json")).unwrap());
+        service.initialize().unwrap();
+        service
+            .register_client("codex", AdapterKind::Codex, live.clone())
+            .unwrap();
+        service
+            .capture_current_account("codex", Some("account"), Some("Account"))
+            .unwrap();
+        let config = mix_core::ConfigStore::new(root.join("config.json"))
+            .unwrap()
+            .load()
+            .unwrap();
+        let reference = &config.apps["codex"].profiles["account"].secret_files["auth.json"];
+        let vault = mix_core::local_vault(&root).unwrap();
+        let server = start(
+            service,
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            0,
+            "test-token-012345678901234567890123".into(),
+            None,
+        )
+        .await
+        .unwrap();
+        // First capture on startup, then a second rotation while already idle.
+        for day in ["19", "20"] {
+            let fresh = serde_json::to_vec(&auth(day)).unwrap();
+            std::fs::write(live.join("auth.json"), &fresh).unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while vault.get(reference).unwrap() != fresh {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(std::fs::read(live.join("auth.json")).unwrap(), fresh);
+        }
+        server.shutdown().await;
+        let saved = vault.get(reference).unwrap();
+        std::fs::write(
+            live.join("auth.json"),
+            serde_json::to_vec(&auth("21")).unwrap(),
+        )
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+        assert_eq!(vault.get(reference).unwrap(), saved);
     }
 
     #[tokio::test]
