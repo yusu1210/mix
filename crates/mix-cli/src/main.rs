@@ -1,5 +1,6 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use mix_core::{AdapterKind, ConfigStore, Error, ErrorCode, MixService, ProfileCategory};
+use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -20,6 +21,14 @@ struct Cli {
     json: bool,
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum SwitchBackend {
+    /// Use Mix's Rust transaction and credential store.
+    Mix,
+    /// Delegate to the existing local CC Switch compatibility script.
+    CcSwitch,
 }
 
 #[derive(Subcommand)]
@@ -56,6 +65,15 @@ enum Command {
         /// Environment when CLIENT is provided first.
         #[arg(value_name = "ENVIRONMENT")]
         profile: Option<String>,
+        /// Switching implementation. The CC Switch backend is an explicit compatibility path.
+        #[arg(long, value_enum, default_value_t = SwitchBackend::Mix)]
+        backend: SwitchBackend,
+        /// Existing CC Switch wrapper to invoke; defaults to ~/.cc-switch/switch-codex.sh.
+        #[arg(long, value_name = "PATH")]
+        script: Option<PathBuf>,
+        /// Do not let the compatibility script open ChatGPT after switching.
+        #[arg(long)]
+        no_open: bool,
     },
     /// Launch one account or environment in an isolated project runtime.
     Run {
@@ -175,7 +193,34 @@ async fn run(cli: Cli) -> mix_core::Result<()> {
                 HumanOutput::Summary("Environment added"),
             ),
         },
-        Command::Use { target, profile } => {
+        Command::Use {
+            target,
+            profile,
+            backend,
+            script,
+            no_open,
+        } => {
+            if backend == SwitchBackend::CcSwitch {
+                if profile.is_some() {
+                    return Err(Error::invalid(
+                        "the CC Switch compatibility backend accepts one Codex alias",
+                    ));
+                }
+                if target.starts_with('-') {
+                    return Err(Error::invalid("the CC Switch provider alias is invalid"));
+                }
+                emit(
+                    cli.json,
+                    run_cc_switch_compatibility(&service, &target, script, no_open)?,
+                    HumanOutput::Summary("CC Switch compatibility switch completed"),
+                );
+                return Ok(());
+            }
+            if script.is_some() || no_open {
+                return Err(Error::invalid(
+                    "--script and --no-open are only available with --backend cc-switch",
+                ));
+            }
             let (client, selector) = if let Some(profile) = profile {
                 (target, profile)
             } else {
@@ -302,6 +347,81 @@ fn open_browser(url: &str) -> mix_core::Result<()> {
         });
         Ok(())
     }
+}
+
+fn run_cc_switch_compatibility(
+    service: &MixService,
+    provider: &str,
+    script: Option<PathBuf>,
+    no_open: bool,
+) -> mix_core::Result<serde_json::Value> {
+    validate_compatibility_provider(provider)?;
+    let script = script.unwrap_or_else(default_cc_switch_script);
+    let metadata = std::fs::symlink_metadata(&script).map_err(|_| {
+        Error::new(
+            ErrorCode::MixNotFound,
+            "CC Switch compatibility script was not found; pass --script <PATH>",
+        )
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(Error::new(
+            ErrorCode::MixValidationError,
+            "CC Switch compatibility script must be a regular file",
+        ));
+    }
+    let mut command = ProcessCommand::new(&script);
+    command.arg(provider);
+    if no_open {
+        command.arg("--no-open");
+    }
+    let output = command
+        .output()
+        .map_err(|error| Error::io("cannot start the CC Switch compatibility script", error))?;
+    if !output.status.success() {
+        return Err(Error::new(
+            ErrorCode::MixLocalFailure,
+            "the CC Switch compatibility script failed",
+        )
+        .details(json!({
+            "exit_code": output.status.code(),
+        })));
+    }
+
+    let (reconciled, warning) = match service.sync_active_account("codex") {
+        Ok(_) => (true, None),
+        Err(error) => (
+            false,
+            Some(format!(
+                "Mix state was not synchronized ({})",
+                error.code.as_str()
+            )),
+        ),
+    };
+    Ok(json!({
+        "status": "switched",
+        "backend": "cc_switch",
+        "provider": provider,
+        "reconciled": reconciled,
+        "warning": warning,
+    }))
+}
+
+fn default_cc_switch_script() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("~"))
+        .join(".cc-switch/switch-codex.sh")
+}
+
+fn validate_compatibility_provider(provider: &str) -> mix_core::Result<()> {
+    if provider.is_empty()
+        || provider.len() > 64
+        || !provider.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
+        })
+    {
+        return Err(Error::invalid("the CC Switch provider alias is invalid"));
+    }
+    Ok(())
 }
 
 fn should_open_browser(no_open: bool, json: bool) -> bool {
@@ -533,6 +653,29 @@ mod tests {
         assert!(no_open);
         assert!(!should_open_browser(no_open, automated.json));
         assert!(!should_open_browser(false, true));
+    }
+
+    #[test]
+    fn cc_switch_backend_is_explicit_and_accepts_a_provider_alias() {
+        let parsed =
+            Cli::try_parse_from(["mix", "use", "--backend", "cc-switch", "momo", "--no-open"])
+                .expect("compatibility backend");
+        let Command::Use {
+            target,
+            profile,
+            backend,
+            no_open,
+            ..
+        } = parsed.command
+        else {
+            panic!("expected use command");
+        };
+        assert_eq!(target, "momo");
+        assert_eq!(profile, None);
+        assert_eq!(backend, SwitchBackend::CcSwitch);
+        assert!(no_open);
+        assert!(validate_compatibility_provider("hair-free").is_ok());
+        assert!(validate_compatibility_provider("../private").is_err());
     }
 
     #[test]

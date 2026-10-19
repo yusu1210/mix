@@ -5,6 +5,12 @@ All notable user-facing changes to Mix are documented here. Mix follows
 
 ## [Unreleased]
 
+### Added
+
+- The CLI can explicitly delegate a Codex switch to an existing local CC Switch
+  wrapper with `mix use --backend cc-switch <ALIAS>`, then reconcile the active
+  account when it is already managed by Mix.
+
 ### Fixed
 
 - Codex installations that moved the CLI to `ChatGPT.app/Contents/Resources/codex-cli/bin/codex` are discovered automatically, including existing Mix configurations that still point to the old path.

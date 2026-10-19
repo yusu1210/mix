@@ -2410,6 +2410,7 @@ name = "mix-cli"
 version = "0.1.6"
 dependencies = [
  "clap",
+ "dirs",
  "mix-core",
  "mix-server",
  "serde_json",

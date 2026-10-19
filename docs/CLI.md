@@ -72,6 +72,7 @@ the client.
 mix status
 mix use Personal
 mix use claude Work
+mix use --backend cc-switch momo
 mix sync codex
 mix run codex Personal --workspace /absolute/path/to/project
 mix run claude Work --workspace /absolute/path/to/project
@@ -103,6 +104,14 @@ For Codex, `use` performs the guarded global account switch: preflight, process
 handling, backup, durable journal, verification, and rollback. For an
 environment-only client such as Claude Code, `use` only selects Mix's default
 isolated environment; it does not modify the client's native home or login.
+
+`mix use --backend cc-switch <ALIAS>` is an explicit compatibility path for an
+existing local CC Switch setup. It runs
+`~/.cc-switch/switch-codex.sh <ALIAS>` without a shell, then attempts to
+reconcile the resulting native account into Mix. It is intended for accounts
+that have not been migrated into Mix yet; normal daily switching should use
+the default Rust backend. The compatibility script and its private Provider
+database remain outside the repository and are never copied into Mix.
 `run` creates a persistent project runtime and launches the selected client
 with `CODEX_HOME` or `CLAUDE_CONFIG_DIR`; different projects can run
 concurrently. Native session directories remain owned by Codex or Claude Code.
