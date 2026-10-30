@@ -65,6 +65,7 @@ for script in \
   apps/macos/scripts/sign-macos.sh \
   apps/macos/scripts/strip-macos.sh \
   scripts/quality-gate.sh \
+  scripts/switch-codex.sh \
   scripts/clean.sh \
   scripts/toolchain-env.sh \
   scripts/verify-node.sh \

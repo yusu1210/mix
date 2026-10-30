@@ -103,6 +103,10 @@ mix run claude Work --workspace /absolute/path/to/project
 
 完整命令契约见 [CLI 文档](docs/CLI.md)。
 
+脚本入口：`sh scripts/switch-codex.sh Personal`，调用项目自己的 Mix CLI；
+可用 `MIX_BIN` 指向本地构建的二进制。脚本、CLI 与 App 共用同一套切换逻辑，
+不依赖外部切换脚本或 Python。
+
 ## 本地优先安全边界
 
 - Mix 不包含产品埋点、广告 SDK、云同步或自动崩溃上传。

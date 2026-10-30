@@ -13,6 +13,8 @@ Mix has one domain implementation and one visual implementation:
 
 A CLI command, Local Web request, and Mac App action enter the same Rust service
 methods; there is no parallel switching implementation.
+The project-owned shell entry point delegates only to Mix's CLI, never to a
+script installed by another application.
 
 The updater integration is deliberately check-only. Its Tauri ACL grants no
 download, install, or process-restart command. A detected version opens the
@@ -173,6 +175,18 @@ account until it is explicitly added; Mix never guesses from the last active
 profile, a credential-only match, or map order.
 
 ## Local credential storage
+
+Native Codex OAuth synchronization compares refresh time and token issue time;
+an equal timestamp does not imply an unchanged token. Before switching to a
+different OAuth identity, Core selects the newest matching login from Mix profiles,
+the native login, and (only for the default native home) optional CC Switch
+credential caches. Each candidate is validated, deduplicated by refresh token,
+and exchanged through the official OAuth endpoint before it is saved. An OAuth
+rejection may try another distinct matching credential; attempts are bounded and
+stop on network/rate-limit/server errors. This recovery never
+copies a Provider route or writes CC Switch data, and requires no external
+application or script. A successful rotation is shared with same-identity Mix
+profiles, not with unrelated accounts.
 
 Mac App, CLI, and Local Web use one cross-platform store under
 `~/.mix/credentials`. References are mapped to non-reversible SHA-256 filenames;

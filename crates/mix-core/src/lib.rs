@@ -1,4 +1,5 @@
 mod adapter;
+mod credential_cache;
 mod error;
 mod fs;
 mod model;

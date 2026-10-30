@@ -81,7 +81,6 @@ if [ -n "${MIX_CODESIGN_IDENTITY:-}" ]; then
 fi
 
 cd "$APP_DIR"
-npm run build
 sh scripts/generate-third-party-licenses.sh
 test -s src-tauri/resources/THIRD-PARTY-LICENSES.html
 case "${MIX_UPDATER_ENABLED:-0}" in

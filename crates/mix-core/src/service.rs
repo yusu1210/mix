@@ -1014,7 +1014,7 @@ impl MixService {
                     "stage": stage,
                     "error_code": error.code.as_str(),
                     "version": env!("CARGO_PKG_VERSION"),
-                    "diagnostic": switch_failure_diagnostic(error),
+                    "diagnostic": switch_failure_diagnostic(&error.details),
                 }),
             );
         }
@@ -2296,6 +2296,7 @@ impl MixService {
                     "stage": activity.data.get("stage"),
                     "error_code": activity.data.get("error_code"),
                     "version": activity.data.get("version"),
+                    "diagnostic": switch_failure_diagnostic(activity.data.get("diagnostic").unwrap_or(&Value::Null)),
                 })).collect::<Vec<_>>(),
         }))
     }
@@ -2683,18 +2684,16 @@ fn codex_auth_kind(client: &ClientConfig) -> &'static str {
     "unknown"
 }
 
-fn switch_failure_diagnostic(error: &Error) -> Value {
+fn switch_failure_diagnostic(details: &Value) -> Value {
     let mut result = serde_json::Map::new();
-    if let Some(status) = error
-        .details
+    if let Some(status) = details
         .get("http_status")
         .and_then(Value::as_u64)
         .filter(|value| (100..=599).contains(value))
     {
         result.insert("http_status".into(), json!(status));
     }
-    if let Some(code) = error
-        .details
+    if let Some(code) = details
         .get("oauth_code")
         .and_then(Value::as_str)
         .filter(|value| {
@@ -4292,11 +4291,35 @@ mod tests {
         let error = Error::new(ErrorCode::MixAccountReauthRequired, "private response")
             .details(json!({"http_status":401,"oauth_code":"refresh_token_reused","token":"private","path":"private"}));
         assert_eq!(
-            switch_failure_diagnostic(&error),
+            switch_failure_diagnostic(&error.details),
             json!({"http_status":401,"oauth_code":"refresh_token_reused"})
         );
         let error = error.details(json!({"http_status":999,"oauth_code":"private_secret"}));
-        assert_eq!(switch_failure_diagnostic(&error), json!({}));
+        assert_eq!(switch_failure_diagnostic(&error.details), json!({}));
+    }
+
+    #[test]
+    fn copied_diagnostics_include_only_safe_oauth_evidence() {
+        let root = tempfile::tempdir().unwrap();
+        let service = service(root.path());
+        service.initialize().unwrap();
+        service
+            .record_activity(
+                "switch_failed",
+                json!({
+                    "stage":"prepare_credential", "error_code":"MIX_ACCOUNT_REAUTH_REQUIRED",
+                    "diagnostic":{"http_status":401,"oauth_code":"refresh_token_reused",
+                        "refresh_token":"private-value", "provider":"private-route"}
+                }),
+            )
+            .unwrap();
+        let report = service.diagnostics().unwrap();
+        assert_eq!(
+            report["recent_switch_failures"][0]["diagnostic"],
+            json!({"http_status":401,"oauth_code":"refresh_token_reused"})
+        );
+        assert!(!report.to_string().contains("private-value"));
+        assert!(!report.to_string().contains("private-route"));
     }
 
     #[test]
@@ -5813,7 +5836,7 @@ mod tests {
         merge_codex_credential(&vault, &reference, &fingerprint, &ambiguous_live).unwrap();
         assert_eq!(
             serde_json::from_slice::<Value>(&vault.get(&reference).unwrap()).unwrap(),
-            saved
+            ambiguous_live
         );
 
         merge_codex_credential(&vault, &reference, &fingerprint, &newer_live).unwrap();

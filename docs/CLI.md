@@ -72,7 +72,6 @@ the client.
 mix status
 mix use Personal
 mix use claude Work
-mix use --backend cc-switch momo
 mix sync codex
 mix run codex Personal --workspace /absolute/path/to/project
 mix run claude Work --workspace /absolute/path/to/project
@@ -105,13 +104,22 @@ handling, backup, durable journal, verification, and rollback. For an
 environment-only client such as Claude Code, `use` only selects Mix's default
 isolated environment; it does not modify the client's native home or login.
 
-`mix use --backend cc-switch <ALIAS>` is an explicit compatibility path for an
-existing local CC Switch setup. It runs
-`~/.cc-switch/switch-codex.sh <ALIAS>` without a shell, then attempts to
-reconcile the resulting native account into Mix. It is intended for accounts
-that have not been migrated into Mix yet; normal daily switching should use
-the default Rust backend. The compatibility script and its private Provider
-database remain outside the repository and are never copied into Mix.
+For a shell-script entry point, use `sh scripts/switch-codex.sh Personal`.
+It executes `mix use codex Personal`, with the same account labels, validation,
+transaction, and exit status as the CLI. Install Mix's CLI first, or set
+`MIX_BIN=/absolute/path/to/mix` to a binary built from this project. There is
+no Python runtime, external switching script, or second account registry.
+The experimental `--backend cc-switch` and `--script` options were removed.
+
+Before switching OAuth accounts, Mix selects the newest same-account credential
+and refreshes it, even if the access token has not expired. If it is rejected,
+Mix can try another matching credential before asking for sign-in. For the native Codex home,
+existing CC Switch database/sidecar credentials are optional read-only recovery
+sources. They are not required to install or use Mix. Only identity-checked,
+successfully refreshed credentials enter Mix; Provider routes and CC Switch's
+selection/settings are never copied or modified. API-key accounts do not use
+this recovery path. Network errors and rate limits do not trigger sign-in.
+
 `run` creates a persistent project runtime and launches the selected client
 with `CODEX_HOME` or `CLAUDE_CONFIG_DIR`; different projects can run
 concurrently. Native session directories remain owned by Codex or Claude Code.

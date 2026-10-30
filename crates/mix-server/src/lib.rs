@@ -408,12 +408,14 @@ async fn switch(
     Json(body): Json<SwitchBody>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(serde_json::to_value(
-        state.service.switch(&body.app, &body.profile)?,
+        blocking_operation(move || state.service.switch(&body.app, &body.profile)).await?,
     )?))
 }
 
 async fn recover(State(state): State<ServerState>) -> Result<Json<Value>, ApiError> {
-    Ok(Json(state.service.recover_interrupted_switch()?))
+    Ok(Json(
+        blocking_operation(move || state.service.recover_interrupted_switch()).await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -427,8 +429,24 @@ async fn switch_back(
     Json(body): Json<SwitchBackBody>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        state.service.switch_back_from_activity(&body.activity)?,
+        blocking_operation(move || state.service.switch_back_from_activity(&body.activity)).await?,
     ))
+}
+
+// Core owns blocking filesystem/process/OAuth work. Keep it off the HTTP
+// executor so state requests and the native-login sampler can still progress.
+async fn blocking_operation<T: Send + 'static>(
+    operation: impl FnOnce() -> mix_core::Result<T> + Send + 'static,
+) -> Result<T, ApiError> {
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|_| {
+            ApiError(Error::new(
+                ErrorCode::MixInternalError,
+                "the local operation worker stopped",
+            ))
+        })?
+        .map_err(ApiError)
 }
 
 #[derive(Deserialize)]
@@ -724,6 +742,24 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tower::ServiceExt;
 
+    #[tokio::test]
+    async fn switch_worker_runs_outside_the_async_executor_and_preserves_errors() {
+        let executor = std::thread::current().id();
+        let worker = blocking_operation(|| Ok(std::thread::current().id()))
+            .await
+            .unwrap_or_else(|error| panic!("{}", error.0));
+        assert_ne!(worker, executor);
+        let error = blocking_operation::<()>(|| {
+            Err(Error::new(
+                ErrorCode::MixAccountRefreshFailed,
+                "test failure",
+            ))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error.0.code, ErrorCode::MixAccountRefreshFailed);
+    }
+
     #[test]
     fn token_comparison_requires_exact_length_and_content() {
         assert!(constant_time_equal(b"token", b"token"));
@@ -977,8 +1013,14 @@ mod tests {
         .await
         .unwrap();
         // First capture on startup, then a second rotation while already idle.
-        for day in ["19", "20"] {
-            let fresh = serde_json::to_vec(&auth(day)).unwrap();
+        for (day, token) in [
+            ("19", "first"),
+            ("19", "same-time-rotation"),
+            ("20", "later"),
+        ] {
+            let mut document = auth(day);
+            document["tokens"]["refresh_token"] = token.into();
+            let fresh = serde_json::to_vec(&document).unwrap();
             std::fs::write(live.join("auth.json"), &fresh).unwrap();
             tokio::time::timeout(std::time::Duration::from_secs(5), async {
                 while vault.get(reference).unwrap() != fresh {

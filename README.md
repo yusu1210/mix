@@ -113,6 +113,10 @@ mix run claude Work --workspace /absolute/path/to/project
 
 See [the CLI reference](docs/CLI.md) for the complete command contract.
 
+For existing shell workflows, `sh scripts/switch-codex.sh Personal` invokes
+Mix's own CLI (`MIX_BIN` can point to a locally built binary). It uses the
+same switch as the App, with no external script or Python dependency.
+
 ## Local-first safety model
 
 - Mix has no analytics, advertising SDK, cloud sync, or automatic crash upload.

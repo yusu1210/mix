@@ -7,12 +7,33 @@ All notable user-facing changes to Mix are documented here. Mix follows
 
 ### Added
 
-- The CLI can explicitly delegate a Codex switch to an existing local CC Switch
-  wrapper with `mix use --backend cc-switch <ALIAS>`, then reconcile the active
-  account when it is already managed by Mix.
+- A project-owned shell entry point, `scripts/switch-codex.sh`, uses the same
+  built-in account switch as the CLI and App; no external script is required.
+
+### Changed
+
+- Removed the experimental external-script `--backend cc-switch` / `--script`
+  CLI options. Use `mix use <ACCOUNT>` or the project-owned shell entry point.
 
 ### Fixed
 
+- Codex native token rotations are captured even when `last_refresh` is
+  unchanged. Older refresh timestamps are ignored; token issue time resolves
+  equal refresh timestamps when available.
+- A rejected OAuth refresh can recover using another identity-checked local
+  credential, including optional read-only CC Switch caches, before requiring
+  sign-in. Duplicate/rejected tokens are not retried, and network/rate-limit
+  errors never trigger credential fallback. Recovered credentials stay paired
+  with the saved Provider route.
+- Codex switches select the newest matching login before sending a refresh
+  request, verify a different OAuth account even when its access token has not
+  expired, and propagate successful rotations to same-account Mix profiles.
+- Copied diagnostics include safe OAuth status/error codes. Blocking switch
+  operations run outside the CLI and HTTP async executors.
+- Direct Tauri builds rebuild the shared UI before bundling, preventing stale
+  frontend assets and mismatched displayed versions.
+- Updated vulnerable TLS/certificate dependencies and frontend development
+  dependencies to patched versions.
 - Codex installations that moved the CLI to `ChatGPT.app/Contents/Resources/codex-cli/bin/codex` are discovered automatically, including existing Mix configurations that still point to the old path.
 - While the Mac App or Local Web is running, newer native Codex OAuth
   credentials are saved to matching accounts without changing their routes.

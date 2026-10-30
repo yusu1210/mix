@@ -148,7 +148,9 @@ accepted asset set before the draft can become public.
    outside Git; only the final sanitized acceptance record is committed.
    Then run `sh scripts/quality-gate.sh`,
    `cargo audit --file Cargo.lock`, and
-   `npm audit --prefix apps/macos --audit-level=high` from a clean checkout.
+   `npm audit --prefix apps/macos --registry=https://registry.npmjs.org --audit-level=high`
+   from a clean checkout. Use the official registry for advisory checks; mirrors
+   may omit advisory data even when package downloads work.
 3. Create and push the reviewed `vX.Y.Z` tag. Approve the protected build. The
    macOS release workflow must finish both native architecture jobs and create
    one draft release; do not publish from the GitHub Release UI.

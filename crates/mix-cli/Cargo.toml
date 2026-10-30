@@ -14,7 +14,6 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
-dirs.workspace = true
 mix-core = { path = "../mix-core" }
 mix-server = { path = "../mix-server" }
 serde_json.workspace = true

@@ -890,14 +890,7 @@ impl GlobalAccountProjection for CodexAdapter {
             return Ok(());
         }
         validate_codex_token_accounts(&document)?;
-        for profile in client.profiles.values() {
-            if profile.account_fingerprint.as_deref() == Some(&fingerprint) {
-                if let Some(reference) = profile.secret_files.get("auth.json") {
-                    merge_codex_credential(vault, reference, &fingerprint, &document)?;
-                }
-            }
-        }
-        Ok(())
+        synchronize_codex_identity(client, &fingerprint, &document, vault)
     }
     fn switch_source(&self, client: &ClientConfig) -> Result<Option<String>> {
         codex_switch_source(self.account_capability(client))
@@ -914,11 +907,11 @@ impl GlobalAccountProjection for CodexAdapter {
 
     fn prepare_target_credential(
         &self,
-        _client: &ClientConfig,
+        client: &ClientConfig,
         target: &Profile,
         vault: &dyn CredentialVault,
     ) -> Result<()> {
-        refresh_managed_codex_credential(target, vault)
+        refresh_managed_codex_credential(client, target, vault)
     }
 
     fn synchronize_source(
@@ -1689,13 +1682,23 @@ fn sync_target_credential(
 const CODEX_OAUTH_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_OAUTH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const CODEX_OAUTH_RESPONSE_BYTES: u64 = 64 * 1024;
-const CODEX_ACCESS_TOKEN_REFRESH_WINDOW_MINUTES: i64 = 5;
-const CODEX_TOKEN_REFRESH_INTERVAL_DAYS: i64 = 8;
 
-fn refresh_managed_codex_credential(target: &Profile, vault: &dyn CredentialVault) -> Result<()> {
+fn refresh_managed_codex_credential(
+    native: &ClientConfig,
+    target: &Profile,
+    vault: &dyn CredentialVault,
+) -> Result<()> {
     let document = managed_codex_credential_document(target, vault)?;
-    if document.get("auth_mode").and_then(Value::as_str) != Some("chatgpt")
-        || !codex_auth_requires_refresh(&document, chrono::Utc::now())
+    if document.get("auth_mode").and_then(Value::as_str) != Some("chatgpt") {
+        return Ok(());
+    }
+    // Changing only the route of the active OAuth identity must not consume
+    // a refresh token underneath the still-running native client. Its latest
+    // login is captured by the transaction; native refresh remains its owner.
+    if CodexAdapter::auth_document(native)
+        .ok()
+        .and_then(|live| CodexAdapter::fingerprint(&live))
+        == target.account_fingerprint
     {
         return Ok(());
     }
@@ -1711,7 +1714,34 @@ fn refresh_managed_codex_credential(target: &Profile, vault: &dyn CredentialVaul
                 "Mix could not initialize secure Codex authentication",
             )
         })?;
-    refresh_managed_codex_credential_with(target, vault, &client, CODEX_OAUTH_TOKEN_URL)
+    refresh_managed_codex_credential_with(target, vault, &client, CODEX_OAUTH_TOKEN_URL, || {
+        codex_credential_candidates(native, target, vault)
+    })?;
+    // One OAuth identity may have several Provider routes. A rotated token
+    // must not leave another Mix profile with the consumed refresh token.
+    let refreshed = managed_codex_credential_document(target, vault)?;
+    synchronize_codex_identity(
+        native,
+        target.account_fingerprint.as_deref().unwrap(),
+        &refreshed,
+        vault,
+    )
+}
+
+fn synchronize_codex_identity(
+    native: &ClientConfig,
+    fingerprint: &str,
+    document: &Value,
+    vault: &dyn CredentialVault,
+) -> Result<()> {
+    for profile in native.profiles.values() {
+        if profile.account_fingerprint.as_deref() == Some(fingerprint) {
+            if let Some(reference) = profile.secret_files.get("auth.json") {
+                merge_codex_credential(vault, reference, fingerprint, document)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn refresh_managed_codex_credential_with(
@@ -1719,6 +1749,7 @@ fn refresh_managed_codex_credential_with(
     vault: &dyn CredentialVault,
     client: &reqwest::blocking::Client,
     endpoint: &str,
+    candidates: impl FnOnce() -> Vec<Value>,
 ) -> Result<()> {
     let expected_fingerprint = target.account_fingerprint.as_deref().ok_or_else(|| {
         Error::new(
@@ -1737,7 +1768,12 @@ fn refresh_managed_codex_credential_with(
         return Ok(());
     }
 
-    let refreshed = request_codex_oauth_refresh(client, endpoint, &document)?;
+    // Select the newest known generation before making any OAuth request.
+    // An unexpired access token does not prove that its refresh token is usable.
+    let mut available = vec![document];
+    available.extend(candidates());
+    let refreshed =
+        refresh_codex_from_candidates(client, endpoint, expected_fingerprint, available)?;
     if CodexAdapter::fingerprint(&refreshed).as_deref() != Some(expected_fingerprint) {
         return Err(Error::new(
             ErrorCode::MixAccountReauthRequired,
@@ -1746,6 +1782,80 @@ fn refresh_managed_codex_credential_with(
     }
     validate_codex_token_accounts(&refreshed)?;
     vault.set(reference, &serde_json::to_vec(&refreshed)?)
+}
+
+fn codex_credential_candidates(
+    native: &ClientConfig,
+    target: &Profile,
+    vault: &dyn CredentialVault,
+) -> Vec<Value> {
+    let mut candidates = native
+        .profiles
+        .values()
+        .filter(|profile| profile.account_fingerprint == target.account_fingerprint)
+        .filter_map(|profile| managed_codex_credential_document(profile, vault).ok())
+        .collect::<Vec<_>>();
+    if let Ok(document) = CodexAdapter::auth_document(native) {
+        candidates.push(document);
+    }
+    // Existing CC Switch users may have a newer rotation in its DB or
+    // sidecar. This is optional data recovery, never a switching backend.
+    // An isolated/test home must never inspect the user's real credentials.
+    if let Some(home) = dirs::home_dir() {
+        if native.live_dir == home.join(".codex") {
+            candidates.extend(crate::credential_cache::cc_switch_credentials(
+                &home.join(".cc-switch"),
+            ));
+        }
+    }
+    candidates
+}
+
+fn refresh_codex_from_candidates(
+    client: &reqwest::blocking::Client,
+    endpoint: &str,
+    expected_fingerprint: &str,
+    mut candidates: Vec<Value>,
+) -> Result<Value> {
+    candidates.retain(|candidate| {
+        CodexAdapter::fingerprint(candidate).as_deref() == Some(expected_fingerprint)
+            && candidate.get("auth_mode").and_then(Value::as_str) == Some("chatgpt")
+            && validate_codex_token_accounts(candidate).is_ok()
+            && ["access_token", "refresh_token"].iter().all(|key| {
+                candidate
+                    .pointer(&format!("/tokens/{key}"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty())
+            })
+    });
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(codex_credential_order(candidate)));
+    let mut attempted = HashSet::new();
+    let mut failure = Error::new(
+        ErrorCode::MixAccountReauthRequired,
+        "the saved Codex account has no usable login; add the account again",
+    );
+    let mut attempts = 0;
+    for candidate in candidates {
+        let token = candidate
+            .pointer("/tokens/refresh_token")
+            .and_then(Value::as_str)
+            .unwrap();
+        if !attempted.insert(token.to_owned()) {
+            continue;
+        }
+        attempts += 1;
+        if attempts > 8 {
+            break;
+        }
+        match request_codex_oauth_refresh(client, endpoint, &candidate) {
+            Ok(refreshed) => return Ok(refreshed),
+            Err(error) if error.code == ErrorCode::MixAccountReauthRequired => failure = error,
+            // Network, rate-limit and server errors are not evidence of an
+            // invalid login. Never churn other tokens or start reauthentication.
+            Err(error) => return Err(error),
+        }
+    }
+    Err(failure)
 }
 
 fn managed_codex_credential_document(
@@ -1788,22 +1898,6 @@ fn managed_codex_credential_document(
         validate_codex_token_accounts(&document)?;
     }
     Ok(document)
-}
-
-fn codex_auth_requires_refresh(document: &Value, now: chrono::DateTime<chrono::Utc>) -> bool {
-    if let Some(expires_at) = document
-        .pointer("/tokens/access_token")
-        .and_then(Value::as_str)
-        .and_then(decode_jwt_claims)
-        .and_then(|claims| claims.get("exp").and_then(Value::as_i64))
-    {
-        return expires_at
-            <= (now + chrono::Duration::minutes(CODEX_ACCESS_TOKEN_REFRESH_WINDOW_MINUTES))
-                .timestamp();
-    }
-    codex_refresh_time(document).is_some_and(|last_refresh| {
-        last_refresh < now - chrono::Duration::days(CODEX_TOKEN_REFRESH_INTERVAL_DAYS)
-    })
 }
 
 fn request_codex_oauth_refresh(
@@ -1885,6 +1979,9 @@ fn request_codex_oauth_refresh(
 fn oauth_refresh_requires_reauth(status: reqwest::StatusCode, code: Option<&str>) -> bool {
     if status == reqwest::StatusCode::UNAUTHORIZED {
         return true;
+    }
+    if status != reqwest::StatusCode::BAD_REQUEST {
+        return false;
     }
     let code = code.map(str::to_ascii_lowercase);
     matches!(
@@ -2030,14 +2127,24 @@ pub(crate) fn merge_codex_credential(
         None => return vault.set(reference, &serde_json::to_vec(live)?),
         Some(_) => {}
     }
-    let live_refresh = codex_refresh_time(live);
-    let saved_refresh = codex_refresh_time(&saved);
-    match (saved_refresh, live_refresh) {
-        (Some(saved), Some(live)) if saved >= live => return Ok(()),
-        (Some(_), None) => return Ok(()),
-        _ => {}
+    if saved == *live || codex_credential_order(&saved) > codex_credential_order(live) {
+        return Ok(());
     }
+    // A timestamp is not a token-generation identifier. Native clients can
+    // rotate credentials within the same timestamp (or keep last_refresh).
+    // On a tie the observed native document wins, as in the original script.
     vault.set(reference, &serde_json::to_vec(live)?)
+}
+
+fn codex_credential_order(
+    document: &Value,
+) -> (Option<chrono::DateTime<chrono::FixedOffset>>, Option<i64>) {
+    let issued = document
+        .pointer("/tokens/access_token")
+        .and_then(Value::as_str)
+        .and_then(decode_jwt_claims)
+        .and_then(|claims| claims.get("iat").and_then(Value::as_i64));
+    (codex_refresh_time(document), issued)
 }
 
 fn codex_refresh_time(document: &Value) -> Option<chrono::DateTime<chrono::FixedOffset>> {
@@ -3427,9 +3534,13 @@ mod tests {
             reqwest::StatusCode::BAD_REQUEST,
             Some("invalid_grant")
         ));
-        assert!(oauth_refresh_requires_reauth(
+        assert!(!oauth_refresh_requires_reauth(
             reqwest::StatusCode::INTERNAL_SERVER_ERROR,
             Some("refresh_token_reused")
+        ));
+        assert!(!oauth_refresh_requires_reauth(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            Some("invalid_grant")
         ));
         assert!(!oauth_refresh_requires_reauth(
             reqwest::StatusCode::BAD_REQUEST,
@@ -3442,39 +3553,41 @@ mod tests {
     }
 
     #[test]
-    fn oauth_refresh_timing_matches_codex() {
-        let now = chrono::DateTime::parse_from_rfc3339("2026-09-06T12:00:00Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
-        let fresh = serde_json::json!({
-            "last_refresh": "2026-08-01T00:00:00Z",
-            "tokens": {
-                "access_token": test_jwt_with_expiration("account-a", now.timestamp() + 301)
-            }
-        });
-        let expiring = serde_json::json!({
-            "last_refresh": "2026-09-06T12:00:00Z",
-            "tokens": {
-                "access_token": test_jwt_with_expiration("account-a", now.timestamp() + 300)
-            }
-        });
-        let old_without_expiration = serde_json::json!({
-            "last_refresh": "2026-08-29T11:59:59Z",
-            "tokens": {"access_token": "opaque"}
-        });
-        let fresh_without_expiration = serde_json::json!({
-            "last_refresh": "2026-08-29T12:00:01Z",
-            "tokens": {"access_token": "opaque"}
-        });
-
-        assert!(!codex_auth_requires_refresh(&fresh, now));
-        assert!(codex_auth_requires_refresh(&expiring, now));
-        assert!(codex_auth_requires_refresh(&old_without_expiration, now));
-        assert!(!codex_auth_requires_refresh(&fresh_without_expiration, now));
-        assert!(!codex_auth_requires_refresh(
-            &serde_json::json!({"tokens": {"access_token": "opaque"}}),
-            now
-        ));
+    fn newest_login_is_refreshed_before_consumed_storage_even_with_unexpired_access() {
+        let mut saved = oauth_fixture("consumed");
+        saved["tokens"]["access_token"] =
+            test_jwt_with_expiration("example-account", chrono::Utc::now().timestamp() + 86400)
+                .into();
+        let mut latest = saved.clone();
+        latest["last_refresh"] = chrono::Utc::now().to_rfc3339().into();
+        latest["tokens"]["refresh_token"] = "latest".into();
+        let (endpoint, server) = oauth_test_server(vec![(
+            "latest",
+            200,
+            serde_json::json!({"access_token":test_jwt("example-account"),"refresh_token":"rotated"}),
+        )]);
+        let vault = crate::vault::MemoryVault::default();
+        let reference = SecretRef {
+            service: "test".into(),
+            account: "example".into(),
+        };
+        vault
+            .set(&reference, &serde_json::to_vec(&saved).unwrap())
+            .unwrap();
+        let target = Profile {
+            account_fingerprint: CodexAdapter::fingerprint(&saved),
+            secret_files: BTreeMap::from([("auth.json".into(), reference.clone())]),
+            ..Default::default()
+        };
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap();
+        refresh_managed_codex_credential_with(&target, &vault, &client, &endpoint, || vec![latest])
+            .unwrap();
+        server.join().unwrap();
+        let stored: Value = serde_json::from_slice(&vault.get(&reference).unwrap()).unwrap();
+        assert_eq!(stored["tokens"]["refresh_token"], "rotated");
     }
 
     #[test]
@@ -3574,6 +3687,7 @@ mod tests {
             &vault,
             &client,
             &format!("http://{address}/token"),
+            Vec::new,
         )
         .unwrap_err();
 
@@ -3584,6 +3698,329 @@ mod tests {
             serde_json::from_slice::<Value>(&vault.get(&reference).unwrap()).unwrap(),
             original
         );
+    }
+
+    fn oauth_fixture(refresh_token: &str) -> Value {
+        serde_json::json!({
+            "auth_mode":"chatgpt", "last_refresh":"2026-01-01T00:00:00Z",
+            "tokens":{"account_id":"example-account","access_token":test_jwt("example-account"),
+                "refresh_token":refresh_token}
+        })
+    }
+
+    fn oauth_test_server(
+        responses: Vec<(&'static str, u16, Value)>,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/token", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            for (expected, status, body) in responses {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    if let Ok((stream, _)) = listener.accept() {
+                        break stream;
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "missing expected OAuth request"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                loop {
+                    let mut chunk = [0; 4096];
+                    let count = stream.read(&mut chunk).unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&chunk[..count]);
+                    let request = String::from_utf8_lossy(&bytes);
+                    if let Some((headers, body)) = request.split_once("\r\n\r\n") {
+                        let length: usize = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length: ")
+                                    .map(str::to_owned)
+                            })
+                            .unwrap()
+                            .parse()
+                            .unwrap();
+                        if body.len() >= length {
+                            assert!(body
+                                .split('&')
+                                .any(|part| part == format!("refresh_token={expected}")));
+                            break;
+                        }
+                    }
+                }
+                let body = body.to_string();
+                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        (endpoint, server)
+    }
+
+    #[test]
+    fn rejected_refresh_recovers_same_account_without_login_or_route_changes() {
+        let original = oauth_fixture("consumed");
+        let cached = oauth_fixture("usable"); // Same timestamp, different generation.
+        let mut wrong_account = oauth_fixture("wrong-account");
+        wrong_account["tokens"]["account_id"] = "someone-else".into();
+        let mut wrong_claims = cached.clone();
+        wrong_claims["tokens"]["access_token"] = test_jwt("someone-else").into();
+        let (endpoint, server) = oauth_test_server(vec![
+            (
+                "consumed",
+                401,
+                serde_json::json!({"error":{"code":"refresh_token_reused"}}),
+            ),
+            (
+                "usable",
+                200,
+                serde_json::json!({"access_token":test_jwt("example-account"), "refresh_token":"rotated"}),
+            ),
+        ]);
+        let vault = crate::vault::MemoryVault::default();
+        let reference = SecretRef {
+            service: "test".into(),
+            account: "example".into(),
+        };
+        vault
+            .set(&reference, &serde_json::to_vec(&original).unwrap())
+            .unwrap();
+        let profile = Profile {
+            account_fingerprint: CodexAdapter::fingerprint(&original),
+            secret_files: BTreeMap::from([("auth.json".into(), reference.clone())]),
+            ..Default::default()
+        };
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap();
+        refresh_managed_codex_credential_with(&profile, &vault, &client, &endpoint, || {
+            vec![
+                original.clone(),
+                wrong_account,
+                wrong_claims,
+                cached.clone(),
+                cached,
+            ]
+        })
+        .unwrap();
+        server.join().unwrap();
+        let stored: Value = serde_json::from_slice(&vault.get(&reference).unwrap()).unwrap();
+        assert_eq!(stored["tokens"]["refresh_token"], "rotated");
+        assert_eq!(
+            CodexAdapter::fingerprint(&stored),
+            profile.account_fingerprint
+        );
+    }
+
+    #[test]
+    fn transient_refresh_failure_does_not_retry_other_tokens_or_replace_credentials() {
+        let (endpoint, server) = oauth_test_server(vec![(
+            "saved",
+            429,
+            serde_json::json!({"error":{"code":"rate_limit_exceeded"}}),
+        )]);
+        let original = oauth_fixture("saved");
+        let vault = crate::vault::MemoryVault::default();
+        let reference = SecretRef {
+            service: "test".into(),
+            account: "example".into(),
+        };
+        let bytes = serde_json::to_vec(&original).unwrap();
+        vault.set(&reference, &bytes).unwrap();
+        let profile = Profile {
+            account_fingerprint: CodexAdapter::fingerprint(&original),
+            secret_files: BTreeMap::from([("auth.json".into(), reference.clone())]),
+            ..Default::default()
+        };
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap();
+        let error =
+            refresh_managed_codex_credential_with(&profile, &vault, &client, &endpoint, || {
+                vec![oauth_fixture("must-not-be-sent")]
+            })
+            .unwrap_err();
+        server.join().unwrap();
+        assert_eq!(error.code, ErrorCode::MixAccountRefreshFailed);
+        assert_eq!(vault.get(&reference).unwrap(), bytes);
+    }
+
+    #[test]
+    fn credential_merge_captures_same_timestamp_rotation_but_rejects_older_issued_token() {
+        let vault = crate::vault::MemoryVault::default();
+        let reference = SecretRef {
+            service: "test".into(),
+            account: "example".into(),
+        };
+        let original = oauth_fixture("old");
+        let live = oauth_fixture("rotated");
+        let fingerprint = CodexAdapter::fingerprint(&live).unwrap();
+        vault
+            .set(&reference, &serde_json::to_vec(&original).unwrap())
+            .unwrap();
+        merge_codex_credential(&vault, &reference, &fingerprint, &live).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&vault.get(&reference).unwrap()).unwrap(),
+            live
+        );
+        let with_issued = |issued| {
+            let claims = serde_json::json!({"iat":issued});
+            let jwt = format!(
+                "e30.{}.signature",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .encode(serde_json::to_vec(&claims).unwrap())
+            );
+            let mut value = live.clone();
+            value["tokens"]["access_token"] = jwt.into();
+            value
+        };
+        let newest = with_issued(200);
+        vault
+            .set(&reference, &serde_json::to_vec(&newest).unwrap())
+            .unwrap();
+        merge_codex_credential(&vault, &reference, &fingerprint, &with_issued(100)).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&vault.get(&reference).unwrap()).unwrap(),
+            newest
+        );
+    }
+
+    #[test]
+    fn route_only_switch_does_not_refresh_the_running_account() {
+        let root = tempfile::tempdir().unwrap();
+        let original = oauth_fixture("native-owned");
+        let bytes = serde_json::to_vec(&original).unwrap();
+        std::fs::write(root.path().join("auth.json"), &bytes).unwrap();
+        let reference = SecretRef {
+            service: "test".into(),
+            account: "example".into(),
+        };
+        let vault = crate::vault::MemoryVault::default();
+        vault.set(&reference, &bytes).unwrap();
+        let target = Profile {
+            account_fingerprint: CodexAdapter::fingerprint(&original),
+            secret_files: BTreeMap::from([("auth.json".into(), reference.clone())]),
+            ..Default::default()
+        };
+        let native = ClientConfig {
+            adapter: AdapterKind::Codex,
+            live_dir: root.path().to_path_buf(),
+            active_profile: None,
+            profiles: BTreeMap::new(),
+            run: crate::RunSpec::default(),
+        };
+        refresh_managed_codex_credential(&native, &target, &vault).unwrap();
+        assert_eq!(vault.get(&reference).unwrap(), bytes);
+        assert_eq!(std::fs::read(root.path().join("auth.json")).unwrap(), bytes);
+    }
+
+    #[test]
+    fn rotation_reaches_all_matching_routes_but_never_other_accounts() {
+        let root = tempfile::tempdir().unwrap();
+        let vault = crate::vault::MemoryVault::default();
+        let mut native = ClientConfig {
+            adapter: AdapterKind::Codex,
+            live_dir: root.path().to_path_buf(),
+            active_profile: None,
+            profiles: BTreeMap::new(),
+            run: crate::RunSpec::default(),
+        };
+        let original = oauth_fixture("consumed");
+        let mut other = original.clone();
+        other["tokens"]["account_id"] = "other-account".into();
+        for (name, auth) in [
+            ("official", &original),
+            ("gateway", &original),
+            ("other", &other),
+        ] {
+            let reference = SecretRef {
+                service: "test".into(),
+                account: name.into(),
+            };
+            let route = root.path().join(format!("{name}.toml"));
+            std::fs::write(&route, name).unwrap();
+            vault
+                .set(&reference, &serde_json::to_vec(auth).unwrap())
+                .unwrap();
+            native.profiles.insert(
+                name.into(),
+                Profile {
+                    account_fingerprint: CodexAdapter::fingerprint(auth),
+                    files: BTreeMap::from([("config.toml".into(), route)]),
+                    secret_files: BTreeMap::from([("auth.json".into(), reference)]),
+                    ..Default::default()
+                },
+            );
+        }
+        let fresh = oauth_fixture("rotated");
+        synchronize_codex_identity(
+            &native,
+            &CodexAdapter::fingerprint(&fresh).unwrap(),
+            &fresh,
+            &vault,
+        )
+        .unwrap();
+        for (name, profile) in &native.profiles {
+            assert_eq!(
+                std::fs::read_to_string(&profile.files["config.toml"]).unwrap(),
+                *name
+            );
+            let stored: Value =
+                serde_json::from_slice(&vault.get(&profile.secret_files["auth.json"]).unwrap())
+                    .unwrap();
+            assert_eq!(
+                stored,
+                if name == "other" {
+                    other.clone()
+                } else {
+                    fresh.clone()
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn rejected_candidates_are_deduplicated_and_never_saved() {
+        let original = oauth_fixture("consumed");
+        let alternative = oauth_fixture("also-consumed");
+        let rejection = serde_json::json!({"error":{"code":"refresh_token_reused"}});
+        let (endpoint, server) = oauth_test_server(vec![
+            ("consumed", 401, rejection.clone()),
+            ("also-consumed", 401, rejection),
+        ]);
+        let vault = crate::vault::MemoryVault::default();
+        let reference = SecretRef {
+            service: "test".into(),
+            account: "example".into(),
+        };
+        let bytes = serde_json::to_vec(&original).unwrap();
+        vault.set(&reference, &bytes).unwrap();
+        let target = Profile {
+            account_fingerprint: CodexAdapter::fingerprint(&original),
+            secret_files: BTreeMap::from([("auth.json".into(), reference.clone())]),
+            ..Default::default()
+        };
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap();
+        let error =
+            refresh_managed_codex_credential_with(&target, &vault, &client, &endpoint, || {
+                vec![original.clone(), alternative.clone(), alternative]
+            })
+            .unwrap_err();
+        server.join().unwrap();
+        assert_eq!(error.code, ErrorCode::MixAccountReauthRequired);
+        assert_eq!(vault.get(&reference).unwrap(), bytes);
     }
 
     #[test]
