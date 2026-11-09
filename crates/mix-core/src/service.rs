@@ -278,6 +278,25 @@ impl MixService {
             let account = adapter.account_capability(client);
             let effective_active = adapter.observed_profile(client);
             let mut issues = Vec::new();
+            let recoverable_project_count = if client.adapter == AdapterKind::Codex
+                && account.available
+                && effective_active.is_some()
+            {
+                match crate::codex_desktop::recovery_count(&client.live_dir) {
+                    Ok(count) => {
+                        if count.is_some() {
+                            issues.push(ClientIssue::new(ClientIssueCode::CodexWorkspaceMissing));
+                        }
+                        count
+                    }
+                    Err(_) => {
+                        issues.push(ClientIssue::new(ClientIssueCode::CodexWorkspaceUnavailable));
+                        None
+                    }
+                }
+            } else {
+                None
+            };
             if client.profiles.is_empty() {
                 issues.push(ClientIssue::new(ClientIssueCode::NoProfiles));
             }
@@ -361,6 +380,7 @@ impl MixService {
                 command_found: executable.is_some(),
                 issues,
                 account_switch: account,
+                recoverable_project_count,
                 capabilities: adapter.capabilities(client, executable.is_some()),
                 import_files: adapter
                     .descriptor()
@@ -1069,7 +1089,9 @@ impl MixService {
             *stage = "synchronize_credentials";
             global_account.synchronize_credentials(client, self.vault.as_ref())?;
             let source = global_account.switch_source(client)?;
-            if source.as_deref() == Some(profile.as_str()) {
+            if source.as_deref() == Some(profile.as_str())
+                && !global_account.needs_workspace_repair(client, &target, self.vault.as_ref())?
+            {
                 *stage = "synchronize_current";
                 let synchronized =
                     global_account.synchronize_source(client, self.vault.as_ref())?;
@@ -1109,7 +1131,7 @@ impl MixService {
                 .as_ref()
                 .and_then(|name| client.profiles.get(name));
             *stage = "prepare_history";
-            let projection = global_account.switch_projection(client, &target)?;
+            let projection = global_account.switch_projection(client, &target, self.vault.as_ref())?;
             *stage = "prepare_transaction";
             let journal = SwitchJournal::prepare(
                 &config.root,
@@ -1151,7 +1173,11 @@ impl MixService {
             global_account.synchronize_target(client, &target, self.vault.as_ref())?;
             client.active_profile = Some(profile.clone());
             outcome = Some(SwitchOutcome {
-                status: "switched".into(),
+                status: if source.as_deref() == Some(profile.as_str()) {
+                    "workspace_restored"
+                } else {
+                    "switched"
+                }.into(),
                 app: app.into(),
                 from_profile: from_name,
                 to_profile: profile,
@@ -7846,6 +7872,72 @@ enabled = true
         assert!(refreshed_current.get("mcp_servers").is_none());
         assert!(refreshed_current.get("plugins").is_none());
         assert!(refreshed_current.get("features").is_none());
+    }
+
+    #[test]
+    fn codex_same_account_repair_restores_grouping_without_changing_login_or_history() {
+        let root = tempfile::tempdir().unwrap();
+        let live = root.path().join("codex");
+        fs::create_dir_all(live.join("sessions")).unwrap();
+        let auth = json!({"OPENAI_API_KEY":"fixture-key"});
+        fs::write(live.join("auth.json"), auth.to_string()).unwrap();
+        fs::write(live.join("config.toml"), "model = \"fixture\"\n").unwrap();
+        let transcript =
+            b"{\"type\":\"event_msg\",\"payload\":{\"message\":\"keep this conversation\"}}\n";
+        fs::write(live.join("sessions/rollout-example.jsonl"), transcript).unwrap();
+        let projects =
+            json!({"local-1":{"id":"local-1","name":"Example","rootPaths":["/example/repo"]}});
+        let assignments = json!({"thread-1":{"projectId":"local-1","projectKind":"local"}});
+        let state = json!({
+            "electron-account-renderer-state-v1": {"owner":null,"inactive":{"previous-owner":{
+                "atoms":{},"globals":{"local-projects":projects,"thread-project-assignments":assignments}
+            }}},
+            "electron-persisted-atom-state":{}
+        });
+        fs::write(live.join(crate::codex_desktop::STATE), state.to_string()).unwrap();
+        let service = MixService::with_vault(
+            root.path().join("mix/config.json"),
+            Arc::new(MemoryVault::default()),
+        )
+        .unwrap();
+        service.initialize().unwrap();
+        service
+            .register_client("codex", AdapterKind::Codex, live.clone())
+            .unwrap();
+        let captured = service
+            .capture_current_account("codex", None, None)
+            .unwrap();
+        let profile = captured["profile"].as_str().unwrap();
+        assert_eq!(
+            crate::codex_desktop::recovery_count(&live).unwrap(),
+            Some(1)
+        );
+
+        let outcome = service.switch("codex", profile).unwrap();
+        assert_eq!(outcome.status, "workspace_restored");
+        assert!(outcome.stopped_pids.is_empty());
+        assert!(!outcome.restarted);
+        let restored: Value =
+            serde_json::from_slice(&fs::read(live.join(crate::codex_desktop::STATE)).unwrap())
+                .unwrap();
+        assert_eq!(restored["local-projects"], projects);
+        assert_eq!(restored["thread-project-assignments"], assignments);
+        assert_eq!(
+            CodexAdapter::parse_auth(&live.join("auth.json")).unwrap(),
+            auth
+        );
+        assert_eq!(
+            fs::read(live.join("sessions/rollout-example.jsonl")).unwrap(),
+            transcript
+        );
+        assert_eq!(crate::codex_desktop::recovery_count(&live).unwrap(), None);
+        assert_eq!(
+            service.switch("codex", profile).unwrap().status,
+            "already_active"
+        );
+        assert!(SwitchJournal::load(service.store.root().unwrap())
+            .unwrap()
+            .is_none());
     }
 
     #[test]

@@ -74,6 +74,21 @@ Provider only when Codex requires the official/custom bucket transition;
 continuing one from Mix also supplies the selected Provider explicitly to the
 official resume operation.
 
+The native-history adapter bundles a pinned, patched SQLite engine. Users do
+not install SQLite or run a database service; Mix still stores its own state
+in JSON. Bundling avoids relying on the older SQLite shipped with some macOS
+versions when reading native database and WAL files.
+
+Recent Codex desktop builds also scope the renderer registry by the native
+OAuth owner. The Codex desktop adapter projects only local projects, their
+local thread assignments, ordering, roots, and local sidebar preferences into
+the target owner slot. It retains account-private atoms and cloud-backed
+projects in their original slot. A private checkpoint parks the native slots
+when the desktop is in API-key mode. The same journal covers the primary global
+state, its native backup, and the checkpoint. On an already active account,
+Mix can detect a missing catalog and run the same stopped-client transaction
+as a repair; it never mutates this state while Codex is running.
+
 ## Project runtimes
 
 Global switching is for changing the active login used by a native client.

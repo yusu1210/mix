@@ -272,6 +272,8 @@ pub struct ClientSnapshot {
     pub command_found: bool,
     pub issues: Vec<ClientIssue>,
     pub account_switch: AccountSwitchCapability,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recoverable_project_count: Option<usize>,
     pub capabilities: BTreeMap<String, Capability>,
     pub import_files: Vec<String>,
     pub profiles: Vec<ProfileSnapshot>,
@@ -307,6 +309,8 @@ pub enum ClientIssueCode {
     UnmanagedAccount,
     UnsupportedAccountProfile,
     CredentialStoreUnavailable,
+    CodexWorkspaceMissing,
+    CodexWorkspaceUnavailable,
 }
 
 #[derive(Clone, Debug, Serialize)]

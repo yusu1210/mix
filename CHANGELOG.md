@@ -5,6 +5,8 @@ All notable user-facing changes to Mix are documented here. Mix follows
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-09
+
 ### Added
 
 - A project-owned shell entry point, `scripts/switch-codex.sh`, uses the same
@@ -17,6 +19,20 @@ All notable user-facing changes to Mix are documented here. Mix follows
 
 ### Fixed
 
+- Codex desktop project catalogs and local conversation grouping now follow
+  the native account-scoped renderer state introduced by recent Codex builds.
+  Switching accounts keeps local projects, renames, deletions, project order,
+  and thread assignments without exporting or importing session history.
+- A current account with a missing project catalog is detected in the App and
+  can restore the local grouping in one action. The repair reuses the normal
+  transactional switch path and reports when Codex was reopened.
+- Native desktop state is validated before a switch, uses Codex's primary
+  state or its own backup, preserves account-private and cloud-backed state,
+  and refuses malformed or ambiguous catalogs instead of guessing.
+- Codex account verification tolerates the native renderer's transient
+  startup owner transition and requires a stable project catalog after launch.
+- Native history access now includes a patched SQLite engine, removing its
+  dependency on the OS SQLite version and addressing RUSTSEC-2026-0459.
 - Codex native token rotations are captured even when `last_refresh` is
   unchanged. Older refresh timestamps are ignored; token issue time resolves
   equal refresh timestamps when available.

@@ -124,10 +124,21 @@ this recovery path. Network errors and rate limits do not trigger sign-in.
 with `CODEX_HOME` or `CLAUDE_CONFIG_DIR`; different projects can run
 concurrently. Native session directories remain owned by Codex or Claude Code.
 
-When the requested Codex account is already active, `use` does not create a
-fake switch or rewrite configuration. It verifies the managed account and
+When the requested Codex account is already active and its project catalog is
+intact, `use` does not rewrite configuration. It verifies the managed account and
 opens or activates the native client without restarting it. Human output says
 `Current account activated`; JSON retains the stable `already_active` status.
+
+Recent Codex desktop versions keep local project catalogs in account-scoped
+renderer state. Mix carries local project metadata and thread assignments
+through the same switch journal, including an empty catalog after the user
+deletes every project. If the active account's catalog is missing, the Mac App
+reports the recoverable project count and offers **Restore project grouping**.
+That action performs the normal same-account repair and reopens Codex. Mix does
+not move transcript bodies or transfer cloud-backed projects between accounts.
+The CLI performs the same repair with `mix use codex <current-account>` and
+returns `workspace_restored`. Wait for running tasks to finish before either
+repair action.
 
 `sessions` prints each continuation locator as a resume id. `resume`
 re-enumerates the native catalog and launches the client's official resume

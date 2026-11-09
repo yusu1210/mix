@@ -44,13 +44,14 @@ export type Client = {
   command_found: boolean;
   issues: ClientIssue[];
   account_switch?: AccountSwitchCapability;
+  recoverable_project_count?: number;
   capabilities: Record<string, ClientCapability>;
   import_files: string[];
   profiles: Profile[];
 };
 
 export type ClientIssue = {
-  code: "interrupted_switch" | "cleanup_pending" | "no_profiles" | "run_command_missing" | "run_command_unavailable" | "unmanaged_account" | "unsupported_account_profile" | "credential_store_unavailable";
+  code: "interrupted_switch" | "cleanup_pending" | "no_profiles" | "run_command_missing" | "run_command_unavailable" | "unmanaged_account" | "unsupported_account_profile" | "credential_store_unavailable" | "codex_workspace_missing" | "codex_workspace_unavailable";
 };
 
 export type ClientCapability = {

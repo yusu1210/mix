@@ -1,6 +1,6 @@
 # Mix Privacy / 隐私说明
 
-Effective date / 生效日期：2026-10-30
+Effective date / 生效日期：2026-11-09
 
 ## English
 
@@ -9,6 +9,8 @@ Mix is local-first. The current release has no product analytics, advertising SD
 Mix processes the paths, client configuration, account labels, workspace bindings, activity records, backups, and native session metadata needed for features the user invokes. The session catalog reads a bounded amount of local transcript text to derive a useful title; it does not rewrite or upload that content. Saved Codex credentials and configured secret references are stored as private files under `~/.mix/credentials`. Raw credentials are not written to Mix configuration, activity logs, backups, or the webview. Native Codex and Claude transcripts remain in their client directories.
 
 Mix can launch Codex and Claude Code. Those clients have their own network behavior and privacy terms; Mix does not control them. macOS, package registries, GitHub, and Apple notarization may also process data when the user downloads, builds, or verifies the software.
+
+To preserve Codex project grouping, switch backups also retain native desktop state, which can include account-specific UI caches and prompt history. A private `.mix-desktop-workspace.json` checkpoint in the Codex directory keeps local project metadata and parks native account state during API-key use. These files stay on the device and are excluded from support diagnostics. They are recovery data; do not delete them to troubleshoot a missing project list.
 
 When switching to a different Codex OAuth account, Mix selects the newest matching local credential and sends its refresh token to the official OpenAI authentication endpoint. For the default Codex home, candidate sources include optional, read-only CC Switch database/sidecar caches. If the token is rejected, Mix may validate another distinct same-account candidate through that endpoint. Mix does not run external scripts or copy their Provider routes. Credentials never go to Mix servers or unrelated Providers.
 
@@ -29,6 +31,8 @@ Mix 是本地优先产品。当前版本不包含产品埋点、广告 SDK、账
 Mix 仅处理用户主动使用功能所需的客户端路径、配置、账号标签、工作区绑定、活动记录、备份及原生会话元数据。会话目录会在本机限量读取 transcript 文本以生成可识别的标题，但不会改写或上传这些内容。保存的 Codex 凭证和配置的密钥引用以私有文件形式存入 `~/.mix/credentials`；原始凭证不会写入 Mix 配置、活动日志、备份或 WebView。Codex 与 Claude 的原生会话正文保留在各自客户端目录中。
 
 Mix 可以启动 Codex 和 Claude Code；这些客户端有各自的联网行为和隐私条款，不受 Mix 控制。用户下载、构建或验证软件时，macOS、包仓库、GitHub 和 Apple 公证服务也可能处理相关数据。
+
+为保留 Codex 项目分组，切换备份还会保存原生桌面状态，其中可能包含账号专属界面缓存和提示词历史。Codex 目录中的私有 `.mix-desktop-workspace.json` 检查点保存本地项目元数据，并在使用 API Key 时暂存原生账号状态。这些文件仅保留在本机，不进入诊断报告；它们属于恢复数据，不要通过删除这些文件排查项目列表缺失。
 
 切换到不同的 Codex OAuth 账号时，Mix 先选择本机同账号的最新凭证，再向 OpenAI 官方认证端点发送刷新令牌。默认 Codex 目录的候选来源包括可选、只读的 CC Switch 数据库/独立缓存。令牌被拒绝后，Mix 可以通过该端点验证同账号的另一份不同凭证。Mix 不执行外部脚本、不复制其中的 Provider 路由，凭证不会发送至 Mix 服务器或其他 Provider。
 

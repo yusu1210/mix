@@ -217,11 +217,20 @@ pub trait GlobalAccountProjection: Send + Sync {
         &self,
         client: &ClientConfig,
         target: &Profile,
+        _vault: &dyn CredentialVault,
     ) -> Result<SwitchProjection> {
         Ok(SwitchProjection {
             files: self.materialized_files(client, target)?,
             ..Default::default()
         })
+    }
+    fn needs_workspace_repair(
+        &self,
+        _client: &ClientConfig,
+        _target: &Profile,
+        _vault: &dyn CredentialVault,
+    ) -> Result<bool> {
+        Ok(false)
     }
     fn verify_projection(&self, client: &ClientConfig, target: &Profile) -> Result<()>;
     fn verify_stable_projection(&self, client: &ClientConfig, target: &Profile) -> Result<()>;
@@ -911,7 +920,13 @@ impl GlobalAccountProjection for CodexAdapter {
         target: &Profile,
         vault: &dyn CredentialVault,
     ) -> Result<()> {
-        refresh_managed_codex_credential(client, target, vault)
+        refresh_managed_codex_credential(client, target, vault)?;
+        // Validate desktop-state compatibility before stopping the client.
+        if crate::codex_desktop::is_present(&client.live_dir) {
+            let auth = managed_codex_credential_document(target, vault)?;
+            crate::codex_desktop::project(&client.live_dir, &auth)?;
+        }
+        Ok(())
     }
 
     fn synchronize_source(
@@ -952,10 +967,15 @@ impl GlobalAccountProjection for CodexAdapter {
         &self,
         client: &ClientConfig,
         target: &Profile,
+        vault: &dyn CredentialVault,
     ) -> Result<SwitchProjection> {
         let files = self.materialized_files(client, target)?;
         let provider = codex_profile_provider(target)?.id;
         let mut files = files;
+        if crate::codex_desktop::is_present(&client.live_dir) {
+            let auth = managed_codex_credential_document(target, vault)?;
+            files.extend(crate::codex_desktop::project(&client.live_dir, &auth)?.files);
+        }
         let history_overrides = codex_history_database_overrides(client, &provider)?;
         let history_replacements = history_overrides.keys().cloned().collect::<BTreeSet<_>>();
         files.extend(history_overrides);
@@ -966,8 +986,22 @@ impl GlobalAccountProjection for CodexAdapter {
         })
     }
 
+    fn needs_workspace_repair(
+        &self,
+        client: &ClientConfig,
+        target: &Profile,
+        vault: &dyn CredentialVault,
+    ) -> Result<bool> {
+        if !crate::codex_desktop::is_present(&client.live_dir) {
+            return Ok(false);
+        }
+        let auth = managed_codex_credential_document(target, vault)?;
+        crate::codex_desktop::needs_repair(&client.live_dir, &auth)
+    }
+
     fn verify_projection(&self, client: &ClientConfig, target: &Profile) -> Result<()> {
-        verify_live_projection(client, target)
+        verify_live_projection(client, target)?;
+        crate::codex_desktop::verify(&client.live_dir)
     }
 
     fn verify_stable_projection(&self, client: &ClientConfig, target: &Profile) -> Result<()> {
@@ -1256,7 +1290,11 @@ fn codex_history_database_overrides(
         source_connection
             .busy_timeout(Duration::from_secs(2))
             .map_err(|error| sqlite_error("cannot configure Codex state database", error))?;
-        if let Err(error) = source_connection.backup(rusqlite::MAIN_DB, &staged, None) {
+        if let Err(error) = source_connection.backup(
+            rusqlite::MAIN_DB,
+            &staged,
+            None::<fn(rusqlite::backup::Progress)>,
+        ) {
             if is_unusable_history_database(&error) {
                 continue;
             }
@@ -2201,7 +2239,9 @@ fn verify_stable_codex_projection(client: &ClientConfig, target: &Profile) -> Re
     if target.account_fingerprint.is_none() {
         return Ok(());
     }
-    for _ in 0..10 {
+    let mut stable = 0;
+    let mut workspace_error = None;
+    for _ in 0..100 {
         thread::sleep(Duration::from_millis(200));
         verify_live_projection(client, target).map_err(|error| {
             Error::new(
@@ -2209,8 +2249,28 @@ fn verify_stable_codex_projection(client: &ClientConfig, target: &Profile) -> Re
                 format!("Codex replaced the target account after restart: {error}"),
             )
         })?;
+        // Native startup temporarily unloads the previous renderer owner before
+        // selecting the new one. Credentials/routes must remain correct while
+        // the workspace settles; then require two seconds of stable state.
+        match crate::codex_desktop::verify(&client.live_dir) {
+            Ok(()) => {
+                stable += 1;
+                if stable == 10 {
+                    return Ok(());
+                }
+            }
+            Err(error) => {
+                stable = 0;
+                workspace_error = Some(error);
+            }
+        }
     }
-    Ok(())
+    Err(workspace_error.unwrap_or_else(|| {
+        Error::new(
+            ErrorCode::MixSwitchVerificationFailed,
+            "Codex desktop workspace did not become stable after restart",
+        )
+    }))
 }
 
 fn codex_profile_provider(profile: &Profile) -> Result<ProviderIdentity> {
@@ -2882,7 +2942,7 @@ pub(crate) fn matching_codex_profile(
     None
 }
 
-fn decode_jwt_claims(jwt: &str) -> Option<Value> {
+pub(crate) fn decode_jwt_claims(jwt: &str) -> Option<Value> {
     if jwt.len() > 2 * 1024 * 1024 {
         return None;
     }
@@ -4228,18 +4288,30 @@ mod tests {
             "model_provider = \"enterprise-gateway\"\n[model_providers.enterprise-gateway]\nbase_url = \"https://gateway.example/v1\"\n",
         )
         .unwrap();
+        let vault = crate::vault::MemoryVault::default();
+        let auth = serde_json::json!({"OPENAI_API_KEY":"fixture-key"});
+        let reference = SecretRef {
+            service: "test".into(),
+            account: "target".into(),
+        };
+        vault
+            .set(&reference, &serde_json::to_vec(&auth).unwrap())
+            .unwrap();
         let target = Profile {
+            account_fingerprint: CodexAdapter::fingerprint(&auth),
+            secret_files: BTreeMap::from([("auth.json".into(), reference)]),
             files: BTreeMap::from([("config.toml".into(), target_config)]),
             ..Profile::default()
         };
-        let projection = CodexAdapter.switch_projection(&client, &target).unwrap();
+        let projection = CodexAdapter
+            .switch_projection(&client, &target, &vault)
+            .unwrap();
         assert!(projection.files.contains_key("config.toml"));
         assert!(projection.files.contains_key("state_5.sqlite"));
         assert_eq!(projection.rewrites.len(), 1);
         assert_eq!(projection.rewrites[0].from, b"\"openai\"");
         assert_eq!(projection.rewrites[0].to, b"\"enterprise-gateway\"");
 
-        let vault = crate::vault::MemoryVault::default();
         let journal = crate::transaction::SwitchJournal::prepare(
             root.path(),
             crate::transaction::SwitchPlan {

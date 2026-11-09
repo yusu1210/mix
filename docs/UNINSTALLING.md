@@ -15,12 +15,16 @@ Codex 或 Claude 的历史记录。
 This leaves Mix settings, saved credentials, and recoverable isolated runtimes
 under `~/.mix`, plus all native client directories. In particular, do not
 remove `~/.codex` or `~/.claude` when uninstalling Mix.
+Keep the `.mix-desktop-workspace.json` checkpoint inside the Codex directory
+as well: it may hold parked native account state needed for a later switch.
 
 1. 在菜单栏选择 **退出 Mix**。关闭窗口并不等于退出菜单栏应用。
 2. 将已经确认过的 `/Applications/mix.app` 移到废纸篓。
 
 这会保留 `~/.mix` 中的设置、已保存凭证与可恢复隔离 Runtime，以及客户端
 自身的全部原生目录。卸载 Mix 时尤其不要删除 `~/.codex` 或 `~/.claude`。
+Codex 目录内的 `.mix-desktop-workspace.json` 检查点也应保留；其中可能暂存
+后续切换所需的原生账号状态。
 
 ## Remove only the CLI / 仅移除 CLI
 

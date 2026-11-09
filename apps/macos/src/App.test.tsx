@@ -40,7 +40,7 @@ const snapshot: Snapshot = {
     name: "codex",
     adapter: "codex",
     profile_category: "account",
-    live_dir: "/Users/test/.codex",
+    live_dir: "/example/home/.codex",
     active: "personal",
     status: "ready",
     command: "codex",
@@ -65,7 +65,7 @@ const snapshot: Snapshot = {
       { name: "team", label: "Team", managed_account: true, has_credentials: true, auth_strategy: "local-file", file_count: 1, secret_count: 1 },
     ],
   }],
-  workspaces: [{ id: "/Users/test/payments", name: "Payments", path: "/Users/test/payments", bindings: { codex: "team" }, exists: true }],
+  workspaces: [{ id: "/example/home/payments", name: "Payments", path: "/example/home/payments", bindings: { codex: "team" }, exists: true }],
   activity: [],
   needs_setup: false,
   health: { status: "healthy", issues: [], local_only: true },
@@ -81,8 +81,8 @@ const sessions: Session[] = [{
   app: "codex",
   profile: "team",
   workspace: "payments",
-  cwd: "/Users/test/payments",
-  state_dir: "/Users/test/.codex/sessions",
+  cwd: "/example/home/payments",
+  state_dir: "/example/home/.codex/sessions",
   native_command: "codex resume session-1",
   resume_id: `mix-session-v1-${"a".repeat(64)}`,
   recoverability: "A",
@@ -135,8 +135,8 @@ afterEach(() => cleanup());
 describe("Mix product shell", () => {
   it("counts a server-reported project total once across catalog rows", () => {
     const rows = [
-      { ...structuredClone(sessions[0]), id: "session-1", project_id: "/Users/test/payments", project_path: "/Users/test/payments", project_session_count: 2 },
-      { ...structuredClone(sessions[0]), id: "session-2", project_id: "/Users/test/payments", project_path: "/Users/test/payments", project_session_count: 2 },
+      { ...structuredClone(sessions[0]), id: "session-1", project_id: "/example/home/payments", project_path: "/example/home/payments", project_session_count: 2 },
+      { ...structuredClone(sessions[0]), id: "session-2", project_id: "/example/home/payments", project_path: "/example/home/payments", project_session_count: 2 },
     ];
 
     expect(buildProjects([], rows)[0].sessionCount).toBe(2);
@@ -231,7 +231,7 @@ describe("Mix product shell", () => {
       name: "claude",
       adapter: "claude",
       profile_category: "environment",
-      live_dir: "/Users/test/.claude",
+      live_dir: "/example/home/.claude",
       active: null,
       status: "setup_required",
       command: "claude",
@@ -517,13 +517,13 @@ describe("Mix product shell", () => {
     const discoveredSessions: Session[] = [{
       ...structuredClone(sessions[0]),
       workspace: undefined,
-      project_id: "/Users/test/customer-portal/packages/web",
+      project_id: "/example/home/customer-portal/packages/web",
       project_name: "web",
-      project_path: "/Users/test/customer-portal/packages/web",
+      project_path: "/example/home/customer-portal/packages/web",
       project_source: "directory",
       project_registered: false,
       project_exists: true,
-      cwd: "/Users/test/customer-portal/packages/web",
+      cwd: "/example/home/customer-portal/packages/web",
       recoverability: "B",
       recovery_reason: "transcript_missing",
       resume_id: undefined,
@@ -544,7 +544,7 @@ describe("Mix product shell", () => {
     await user.click(screen.getByRole("button", { name: "在 Codex 中打开" }));
     await waitFor(() => expect(mocks.request.mock.calls.some(([path]) => path === "/api/native/open")).toBe(true));
     const open = mocks.request.mock.calls.find(([path]) => path === "/api/native/open");
-    expect(JSON.parse(String((open?.[1] as RequestInit).body))).toEqual({ app: "codex", cwd: "/Users/test/customer-portal/packages/web" });
+    expect(JSON.parse(String((open?.[1] as RequestInit).body))).toEqual({ app: "codex", cwd: "/example/home/customer-portal/packages/web" });
   });
 
   it("honors a registered project binding by switching before opening the project", async () => {
@@ -922,14 +922,14 @@ describe("Mix product shell", () => {
 
     await user.click(within(dialog).getByRole("button", { name: "添加项目" }));
     expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "请选择项目目录。");
-    await user.type(within(dialog).getByRole("textbox"), "/Users/test/projects/billing");
+    await user.type(within(dialog).getByRole("textbox"), "/example/home/projects/billing");
     await user.click(within(dialog).getByRole("button", { name: "添加项目" }));
 
     await waitFor(() => expect(mocks.request.mock.calls.some(([path]) => path === "/api/workspaces")).toBe(true));
     const create = mocks.request.mock.calls.find(([path]) => path === "/api/workspaces");
     expect(JSON.parse(String((create?.[1] as RequestInit | undefined)?.body))).toEqual({
       name: "billing",
-      path: "/Users/test/projects/billing",
+      path: "/example/home/projects/billing",
       bindings: { codex: "personal" },
     });
   });
@@ -962,7 +962,7 @@ describe("Mix product shell", () => {
     const update = mocks.request.mock.calls.find(([path, init]) => path === "/api/workspaces" && (init as RequestInit | undefined)?.method === "POST");
     expect(JSON.parse(String((update?.[1] as RequestInit).body))).toEqual({
       name: "Payment Platform",
-      path: "/Users/test/payments",
+      path: "/example/home/payments",
       bindings: { codex: "personal" },
     });
 
@@ -973,13 +973,13 @@ describe("Mix product shell", () => {
 
     await waitFor(() => expect(mocks.request.mock.calls.some(([path, init]) => path === "/api/workspaces" && (init as RequestInit | undefined)?.method === "DELETE")).toBe(true));
     const remove = mocks.request.mock.calls.find(([path, init]) => path === "/api/workspaces" && (init as RequestInit | undefined)?.method === "DELETE");
-    expect(JSON.parse(String((remove?.[1] as RequestInit).body))).toEqual({ workspace: "/Users/test/payments" });
+    expect(JSON.parse(String((remove?.[1] as RequestInit).body))).toEqual({ workspace: "/example/home/payments" });
   });
 
   it("groups a nested session under the longest matching registered project", async () => {
     const nested = structuredClone(sessions);
-    nested[0].cwd = "/Users/test/payments/packages/web";
-    nested[0].project_path = "/Users/test/payments/packages/web";
+    nested[0].cwd = "/example/home/payments/packages/web";
+    nested[0].project_path = "/example/home/payments/packages/web";
     nested[0].project_name = "web";
     mocks.request.mockImplementation(async (path: string) => {
       if (path === "/api/state") return structuredClone(snapshot);
@@ -1004,8 +1004,8 @@ describe("Mix product shell", () => {
         id: "global-session",
         title: "Global history",
         app: "codex",
-        cwd: "/Users/test/legacy",
-        state_dir: "/Users/test/.codex",
+        cwd: "/example/home/legacy",
+        state_dir: "/example/home/.codex",
         native_command: "codex resume global-session",
         recoverability: "B",
         recovery_reason: "working_directory_missing",
@@ -1061,7 +1061,7 @@ describe("Mix product shell", () => {
         switchable: true,
       }],
     });
-    expect(JSON.stringify(trayState)).not.toContain("/Users/test");
+    expect(JSON.stringify(trayState)).not.toContain("/example/home");
     expect(JSON.stringify(trayState)).not.toContain("auth.json");
 
     expect(handleTrayAction).toBeTypeOf("function");
@@ -1516,7 +1516,7 @@ describe("Mix product shell", () => {
       profile.managed_account = false;
       profile.auth_strategy = "configuration";
     });
-    claude.workspaces = [{ id: "payments", name: "Payments", path: "/Users/test/payments", bindings: { claude: "team" }, exists: true }];
+    claude.workspaces = [{ id: "payments", name: "Payments", path: "/example/home/payments", bindings: { claude: "team" }, exists: true }];
     mocks.request.mockImplementation(async (path: string, init?: RequestInit) => {
       if (path === "/api/state") return claude;
       if (path === "/api/discovery") return [];
@@ -1618,6 +1618,29 @@ describe("Mix product shell", () => {
     const addDialog = await screen.findByRole("dialog", { name: "添加账号" });
     expect(within(addDialog).getByRole("tab", { name: /另一个账号/ }).getAttribute("aria-selected")).toBe("true");
     expect((within(addDialog).getByRole("button", { name: "继续登录" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("offers one-click recovery when Codex lost local project grouping", async () => {
+    const missingProjects = structuredClone(snapshot);
+    missingProjects.apps[0].recoverable_project_count = 16;
+    mocks.request.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/api/state") return structuredClone(missingProjects);
+      if (path === "/api/discovery") return [];
+      if (path.startsWith("/api/sessions")) return [];
+      if (path === "/api/switch") {
+        expect(JSON.parse(String(init?.body))).toEqual({ app: "codex", profile: "personal" });
+        return { status: "workspace_restored", restarted: true };
+      }
+      throw new Error(`Unexpected API path: ${path}`);
+    });
+
+    const user = userEvent.setup();
+    render(<App/>);
+    await waitForAccountsPage();
+    expect(screen.getByText(/找到 16 个本地项目及会话分组/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "恢复项目分组" }));
+    await waitFor(() => expect(mocks.request.mock.calls.some(([path]) => path === "/api/switch")).toBe(true));
+    expect(await screen.findByText("项目分组已恢复，Codex 已重新打开")).toBeTruthy();
   });
 
   it("switches to English and keeps Local Web updates explicitly desktop-only", async () => {
