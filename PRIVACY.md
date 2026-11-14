@@ -10,9 +10,9 @@ Mix processes the paths, client configuration, account labels, workspace binding
 
 Mix can launch Codex and Claude Code. Those clients have their own network behavior and privacy terms; Mix does not control them. macOS, package registries, GitHub, and Apple notarization may also process data when the user downloads, builds, or verifies the software.
 
-To preserve Codex project grouping, switch backups also retain native desktop state, which can include account-specific UI caches and prompt history. A private `.mix-desktop-workspace.json` checkpoint in the Codex directory keeps local project metadata and parks native account state during API-key use. These files stay on the device and are excluded from support diagnostics. They are recovery data; do not delete them to troubleshoot a missing project list.
+Codex owns its project grouping, desktop preferences, and native history. Mix does not read, back up, or rewrite Codex desktop project state. Account switching keeps native session files in place and only updates the client metadata required to pair the selected account with its Provider route.
 
-When switching to a different Codex OAuth account, Mix selects the newest matching local credential and sends its refresh token to the official OpenAI authentication endpoint. For the default Codex home, candidate sources include optional, read-only CC Switch database/sidecar caches. If the token is rejected, Mix may validate another distinct same-account candidate through that endpoint. Mix does not run external scripts or copy their Provider routes. Credentials never go to Mix servers or unrelated Providers.
+When switching to a different Codex OAuth account, Mix selects the newest matching credential saved in Mix or currently held by Codex and sends its refresh token to the official OpenAI authentication endpoint. If the token is rejected, Mix may validate another distinct credential for the same account through that endpoint. Credentials never go to Mix servers or unrelated Providers.
 
 Local and development builds do not contact an update service. A signed release build can check a configured HTTPS release endpoint at launch; users can change this to manual checks in Settings. The request is limited to ordinary update metadata such as Mix version, target platform, and architecture and does not include credentials, account labels, workspace paths, diagnostics, or transcripts. The endpoint host (initially GitHub) may receive normal network metadata such as IP address and request time under its own privacy terms. Downloads and installation always require an explicit user action.
 
@@ -32,9 +32,9 @@ Mix 仅处理用户主动使用功能所需的客户端路径、配置、账号�
 
 Mix 可以启动 Codex 和 Claude Code；这些客户端有各自的联网行为和隐私条款，不受 Mix 控制。用户下载、构建或验证软件时，macOS、包仓库、GitHub 和 Apple 公证服务也可能处理相关数据。
 
-为保留 Codex 项目分组，切换备份还会保存原生桌面状态，其中可能包含账号专属界面缓存和提示词历史。Codex 目录中的私有 `.mix-desktop-workspace.json` 检查点保存本地项目元数据，并在使用 API Key 时暂存原生账号状态。这些文件仅保留在本机，不进入诊断报告；它们属于恢复数据，不要通过删除这些文件排查项目列表缺失。
+Codex 负责项目分组、桌面偏好和原生历史。Mix 不读取、备份或改写 Codex 桌面项目状态。切换账号会保留原生会话文件，只更新将目标账号与其 Provider 路由配对所必需的客户端元数据。
 
-切换到不同的 Codex OAuth 账号时，Mix 先选择本机同账号的最新凭证，再向 OpenAI 官方认证端点发送刷新令牌。默认 Codex 目录的候选来源包括可选、只读的 CC Switch 数据库/独立缓存。令牌被拒绝后，Mix 可以通过该端点验证同账号的另一份不同凭证。Mix 不执行外部脚本、不复制其中的 Provider 路由，凭证不会发送至 Mix 服务器或其他 Provider。
+切换到不同的 Codex OAuth 账号时，Mix 先从 Mix 保存的凭证或 Codex 当前持有的凭证中选择同账号的最新凭证，再向 OpenAI 官方认证端点发送刷新令牌。令牌被拒绝后，Mix 可以通过该端点验证同账号的另一份不同凭证。凭证不会发送至 Mix 服务器或其他 Provider。
 
 本地和开发构建不会连接更新服务。签名正式版可在启动时访问配置的 HTTPS 发布端点检查更新，用户可在设置中改为手动检查。请求仅包含 Mix 版本、目标平台和架构等常规更新元数据，不包含凭证、账号标签、工作区路径、诊断信息或 transcript。端点提供方（初期为 GitHub）可能依据其隐私条款处理 IP 地址、请求时间等普通网络元数据。下载和安装始终需要用户明确操作。
 

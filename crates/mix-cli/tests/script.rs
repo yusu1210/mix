@@ -37,7 +37,6 @@ fn script_switches_accounts_through_the_real_cli_and_preserves_history() {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/switch-codex.sh");
     let desktop = live.join(".codex-global-state.json");
     let backup = live.join(".codex-global-state.json.bak");
-    let checkpoint = live.join(".mix-desktop-workspace.json");
     let shared = json!({
         "electron-renderer-content-owner":"example-owner",
         "local-projects":{"project-1":{"id":"project-1","name":"Example","rootPaths":["/example/repo"]}},
@@ -57,7 +56,6 @@ fn script_switches_accounts_through_the_real_cli_and_preserves_history() {
             std::fs::write(&desktop, state).unwrap();
         }
         std::fs::write(&backup, b"native backup").unwrap();
-        std::fs::write(&checkpoint, b"obsolete checkpoint").unwrap();
         for (name, status) in [
             ("First", "switched"),
             ("Second", "switched"),
@@ -90,7 +88,6 @@ fn script_switches_accounts_through_the_real_cli_and_preserves_history() {
                 native_state
             );
             assert_eq!(std::fs::read(&backup).unwrap(), b"native backup");
-            assert_eq!(std::fs::read(&checkpoint).unwrap(), b"obsolete checkpoint");
             assert!(!root
                 .path()
                 .join("mix/transactions/active-switch.json")

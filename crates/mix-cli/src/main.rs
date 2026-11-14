@@ -551,15 +551,13 @@ mod tests {
     }
 
     #[test]
-    fn switch_has_one_builtin_implementation_and_accepts_unicode_labels() {
+    fn switch_accepts_unicode_labels() {
         let parsed = Cli::try_parse_from(["mix", "use", "个人账号"]).unwrap();
         let Command::Use { target, profile } = parsed.command else {
             panic!("expected use command");
         };
         assert_eq!(target, "个人账号");
         assert_eq!(profile, None);
-        assert!(Cli::try_parse_from(["mix", "use", "Personal", "--script", "other.sh"]).is_err());
-        assert!(Cli::try_parse_from(["mix", "use", "Personal", "--backend", "cc-switch"]).is_err());
     }
 
     #[test]

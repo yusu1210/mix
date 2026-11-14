@@ -1715,12 +1715,13 @@ fn refresh_managed_codex_credential(
     // One OAuth identity may have several Provider routes. A rotated token
     // must not leave another Mix profile with the consumed refresh token.
     let refreshed = managed_codex_credential_document(target, vault)?;
-    synchronize_codex_identity(
-        native,
-        target.account_fingerprint.as_deref().unwrap(),
-        &refreshed,
-        vault,
-    )
+    let fingerprint = target.account_fingerprint.as_deref().ok_or_else(|| {
+        Error::new(
+            ErrorCode::MixAccountReauthRequired,
+            "the saved Codex login has no stable account identity",
+        )
+    })?;
+    synchronize_codex_identity(native, fingerprint, &refreshed, vault)
 }
 
 fn synchronize_codex_identity(
@@ -1821,10 +1822,12 @@ fn refresh_codex_from_candidates(
     );
     let mut attempts = 0;
     for candidate in candidates {
-        let token = candidate
+        let Some(token) = candidate
             .pointer("/tokens/refresh_token")
             .and_then(Value::as_str)
-            .unwrap();
+        else {
+            continue;
+        };
         if !attempted.insert(token.to_owned()) {
             continue;
         }
