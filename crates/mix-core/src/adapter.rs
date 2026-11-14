@@ -217,20 +217,11 @@ pub trait GlobalAccountProjection: Send + Sync {
         &self,
         client: &ClientConfig,
         target: &Profile,
-        _vault: &dyn CredentialVault,
     ) -> Result<SwitchProjection> {
         Ok(SwitchProjection {
             files: self.materialized_files(client, target)?,
             ..Default::default()
         })
-    }
-    fn needs_workspace_repair(
-        &self,
-        _client: &ClientConfig,
-        _target: &Profile,
-        _vault: &dyn CredentialVault,
-    ) -> Result<bool> {
-        Ok(false)
     }
     fn verify_projection(&self, client: &ClientConfig, target: &Profile) -> Result<()>;
     fn verify_stable_projection(&self, client: &ClientConfig, target: &Profile) -> Result<()>;
@@ -419,7 +410,6 @@ impl Adapter for CodexAdapter {
                         available: account.available,
                         support: CapabilitySupport::NativeFilesReadonly,
                         authority: CapabilityAuthority::ReadOnly,
-                        fallback: None,
                         reason: (!account.available)
                             .then(|| format!("{:?}", account.status).to_lowercase()),
                         completeness: Some(Completeness::Complete),
@@ -431,7 +421,6 @@ impl Adapter for CodexAdapter {
                         available: account.available,
                         support: CapabilitySupport::NativeFilesReadonly,
                         authority: CapabilityAuthority::CredentialProjection,
-                        fallback: None,
                         reason: None,
                         completeness: Some(Completeness::Complete),
                     },
@@ -442,7 +431,6 @@ impl Adapter for CodexAdapter {
                         available: command_found,
                         support: CapabilitySupport::NativeCli,
                         authority: CapabilityAuthority::CredentialProjection,
-                        fallback: None,
                         reason: None,
                         completeness: Some(Completeness::Complete),
                     },
@@ -456,7 +444,6 @@ impl Adapter for CodexAdapter {
                             .any(|profile| profile.account_fingerprint.is_some()),
                         support: CapabilitySupport::Configured,
                         authority: CapabilityAuthority::CredentialProjection,
-                        fallback: None,
                         reason: None,
                         completeness: Some(Completeness::Complete),
                     },
@@ -467,7 +454,6 @@ impl Adapter for CodexAdapter {
                         available: client.live_dir.is_dir(),
                         support: CapabilitySupport::NativeFilesReadonly,
                         authority: CapabilityAuthority::ReadOnly,
-                        fallback: None,
                         reason: None,
                         completeness: Some(Completeness::BestEffort),
                     },
@@ -478,7 +464,6 @@ impl Adapter for CodexAdapter {
                         available: command_found,
                         support: CapabilitySupport::NativeCli,
                         authority: CapabilityAuthority::Launch,
-                        fallback: None,
                         reason: None,
                         completeness: Some(Completeness::Complete),
                     },
@@ -489,7 +474,6 @@ impl Adapter for CodexAdapter {
                         available: false,
                         support: CapabilitySupport::Unsupported,
                         authority: CapabilityAuthority::Launch,
-                        fallback: None,
                         reason: None,
                         completeness: Some(Completeness::BestEffort),
                     },
@@ -500,7 +484,6 @@ impl Adapter for CodexAdapter {
                         available: command_found,
                         support: CapabilitySupport::NativeCli,
                         authority: CapabilityAuthority::Launch,
-                        fallback: None,
                         reason: None,
                         completeness: Some(Completeness::Complete),
                     },
@@ -920,13 +903,7 @@ impl GlobalAccountProjection for CodexAdapter {
         target: &Profile,
         vault: &dyn CredentialVault,
     ) -> Result<()> {
-        refresh_managed_codex_credential(client, target, vault)?;
-        // Validate desktop-state compatibility before stopping the client.
-        if crate::codex_desktop::is_present(&client.live_dir) {
-            let auth = managed_codex_credential_document(target, vault)?;
-            crate::codex_desktop::project(&client.live_dir, &auth)?;
-        }
-        Ok(())
+        refresh_managed_codex_credential(client, target, vault)
     }
 
     fn synchronize_source(
@@ -967,15 +944,9 @@ impl GlobalAccountProjection for CodexAdapter {
         &self,
         client: &ClientConfig,
         target: &Profile,
-        vault: &dyn CredentialVault,
     ) -> Result<SwitchProjection> {
-        let files = self.materialized_files(client, target)?;
+        let mut files = self.materialized_files(client, target)?;
         let provider = codex_profile_provider(target)?.id;
-        let mut files = files;
-        if crate::codex_desktop::is_present(&client.live_dir) {
-            let auth = managed_codex_credential_document(target, vault)?;
-            files.extend(crate::codex_desktop::project(&client.live_dir, &auth)?.files);
-        }
         let history_overrides = codex_history_database_overrides(client, &provider)?;
         let history_replacements = history_overrides.keys().cloned().collect::<BTreeSet<_>>();
         files.extend(history_overrides);
@@ -986,22 +957,8 @@ impl GlobalAccountProjection for CodexAdapter {
         })
     }
 
-    fn needs_workspace_repair(
-        &self,
-        client: &ClientConfig,
-        target: &Profile,
-        vault: &dyn CredentialVault,
-    ) -> Result<bool> {
-        if !crate::codex_desktop::is_present(&client.live_dir) {
-            return Ok(false);
-        }
-        let auth = managed_codex_credential_document(target, vault)?;
-        crate::codex_desktop::needs_repair(&client.live_dir, &auth)
-    }
-
     fn verify_projection(&self, client: &ClientConfig, target: &Profile) -> Result<()> {
-        verify_live_projection(client, target)?;
-        crate::codex_desktop::verify(&client.live_dir)
+        verify_live_projection(client, target)
     }
 
     fn verify_stable_projection(&self, client: &ClientConfig, target: &Profile) -> Result<()> {
@@ -1836,16 +1793,6 @@ fn codex_credential_candidates(
     if let Ok(document) = CodexAdapter::auth_document(native) {
         candidates.push(document);
     }
-    // Existing CC Switch users may have a newer rotation in its DB or
-    // sidecar. This is optional data recovery, never a switching backend.
-    // An isolated/test home must never inspect the user's real credentials.
-    if let Some(home) = dirs::home_dir() {
-        if native.live_dir == home.join(".codex") {
-            candidates.extend(crate::credential_cache::cc_switch_credentials(
-                &home.join(".cc-switch"),
-            ));
-        }
-    }
     candidates
 }
 
@@ -2239,9 +2186,9 @@ fn verify_stable_codex_projection(client: &ClientConfig, target: &Profile) -> Re
     if target.account_fingerprint.is_none() {
         return Ok(());
     }
-    let mut stable = 0;
-    let mut workspace_error = None;
-    for _ in 0..100 {
+    // Require two seconds of stable credentials and routing after startup.
+    // Desktop projects and preferences belong to the client, not this check.
+    for _ in 0..10 {
         thread::sleep(Duration::from_millis(200));
         verify_live_projection(client, target).map_err(|error| {
             Error::new(
@@ -2249,28 +2196,8 @@ fn verify_stable_codex_projection(client: &ClientConfig, target: &Profile) -> Re
                 format!("Codex replaced the target account after restart: {error}"),
             )
         })?;
-        // Native startup temporarily unloads the previous renderer owner before
-        // selecting the new one. Credentials/routes must remain correct while
-        // the workspace settles; then require two seconds of stable state.
-        match crate::codex_desktop::verify(&client.live_dir) {
-            Ok(()) => {
-                stable += 1;
-                if stable == 10 {
-                    return Ok(());
-                }
-            }
-            Err(error) => {
-                stable = 0;
-                workspace_error = Some(error);
-            }
-        }
     }
-    Err(workspace_error.unwrap_or_else(|| {
-        Error::new(
-            ErrorCode::MixSwitchVerificationFailed,
-            "Codex desktop workspace did not become stable after restart",
-        )
-    }))
+    Ok(())
 }
 
 fn codex_profile_provider(profile: &Profile) -> Result<ProviderIdentity> {
@@ -2337,7 +2264,6 @@ impl Adapter for ClaudeAdapter {
                 available: client.live_dir.is_dir(),
                 support: CapabilitySupport::NativeFilesReadonly,
                 authority: CapabilityAuthority::ReadOnly,
-                fallback: None,
                 reason: None,
                 completeness: Some(Completeness::BestEffort),
             },
@@ -2348,7 +2274,6 @@ impl Adapter for ClaudeAdapter {
                 available: command_found,
                 support: CapabilitySupport::NativeCli,
                 authority: CapabilityAuthority::Launch,
-                fallback: None,
                 reason: None,
                 completeness: Some(Completeness::Complete),
             },
@@ -2548,7 +2473,6 @@ fn base_capabilities(command_found: bool, process_control: bool) -> BTreeMap<Str
                     CapabilitySupport::Unsupported
                 },
                 authority,
-                fallback: None,
                 reason: None,
                 completeness: None,
             },
@@ -2616,11 +2540,6 @@ pub fn discover_executable(client: &ClientConfig) -> Option<PathBuf> {
         if path.is_file() {
             return Some(path.to_path_buf());
         }
-        if client.adapter == AdapterKind::Codex && is_legacy_codex_desktop_path(path) {
-            return codex_desktop_executables(&home)
-                .into_iter()
-                .find(|candidate| candidate.is_file());
-        }
         return None;
     }
     let candidates = std::env::var_os("PATH")
@@ -2630,26 +2549,11 @@ pub fn discover_executable(client: &ClientConfig) -> Option<PathBuf> {
             PathBuf::from("/opt/homebrew/bin"),
             PathBuf::from("/usr/local/bin"),
             home.join(".local/bin"),
-            PathBuf::from("/Applications/ChatGPT.app/Contents/Resources"),
             PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin"),
-            home.join("Applications/ChatGPT.app/Contents/Resources"),
             home.join("Applications/ChatGPT.app/Contents/Resources/codex-cli/bin"),
         ])
         .map(|root| root.join(value));
     candidates.into_iter().find(|path| path.is_file())
-}
-
-fn is_legacy_codex_desktop_path(path: &Path) -> bool {
-    path.ends_with("ChatGPT.app/Contents/Resources/codex")
-}
-
-fn codex_desktop_executables(home: &Path) -> Vec<PathBuf> {
-    vec![
-        PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"),
-        home.join("Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"),
-        PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex"),
-        home.join("Applications/ChatGPT.app/Contents/Resources/codex"),
-    ]
 }
 
 fn configured_command(client: &ClientConfig) -> Result<Vec<String>> {
@@ -4303,9 +4207,7 @@ mod tests {
             files: BTreeMap::from([("config.toml".into(), target_config)]),
             ..Profile::default()
         };
-        let projection = CodexAdapter
-            .switch_projection(&client, &target, &vault)
-            .unwrap();
+        let projection = CodexAdapter.switch_projection(&client, &target).unwrap();
         assert!(projection.files.contains_key("config.toml"));
         assert!(projection.files.contains_key("state_5.sqlite"));
         assert_eq!(projection.rewrites.len(), 1);

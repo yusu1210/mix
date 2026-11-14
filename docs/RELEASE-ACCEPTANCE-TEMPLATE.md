@@ -45,7 +45,7 @@ provenance instead.
 
 Workflow check: `codex_oauth_api_key_provider_matrix`
 
-- [ ] Fresh official OAuth sign-in succeeds in a disposable user; Mix saves only after explicit confirmation.
+- [ ] Fresh official OAuth sign-in succeeds in a disposable user; Mix saves only after the user starts enrollment and the returned account identity is verified.
 - [ ] Expired/rotated OAuth state is refreshed by Codex, then `mix sync codex` updates only the matching saved account and never overwrites a newer vault generation. The normal A → B switch proves the same synchronization occurs automatically without requiring a separate UI action.
 - [ ] Official API-key mode and one reviewed custom Provider configuration launch successfully without writing raw secrets to Mix config, logs, activity, diagnostics, process arguments, or UI responses.
 - [ ] With a disposable `CODEX_HOME` and loopback capture server, the exact shipped Codex version proves that `requires_openai_auth` sends the isolated `auth.json` API Key only to the selected custom Provider path. The probe must not contact either a real Provider or OpenAI and must record no raw credential.
@@ -67,10 +67,11 @@ Workflow check: `codex_account_switch_history_rollback`
 - [ ] When A and B use different Providers, the restarted Codex client uses the target route before its first request and never sends the target credential to the previously active endpoint; continuing an old thread from Mix explicitly uses the selected Provider.
 - [ ] Record the exact Codex App and bundled CLI versions. Verify both lifecycle paths: switching a running Codex client, and opening Codex when the requested account is already active but the app is closed. Process appearance or a successful `open` exit code alone is insufficient evidence that the client is ready.
 - [ ] No export/import is performed. Native indexes remain client-owned; only the documented Provider metadata fields may change, while rollout bodies and transcript content remain byte-stable and visible after both directions of switching.
-- [ ] Add or change MCP servers, plugins, projects, features, notifications and personality after capturing A and B. Switching A → B → A preserves those latest shared settings while applying only each account's Provider/endpoint/model compatibility overlay; a legacy full profile snapshot cannot restore stale shared settings.
+- [ ] Add or change MCP servers, plugins, projects, features, notifications and personality after capturing A and B. Switching A → B → A preserves those latest shared settings while applying only each account's Provider/endpoint/model compatibility overlay; unrelated settings in a profile cannot restore stale shared values.
+- [ ] Account switching leaves native desktop project state, its backup, and unrelated files byte-identical; missing, malformed, and future desktop state formats do not prevent switching.
 - [ ] A recovery-grade A session opens through one-click **Continue** using the exact native resume command and original working directory; B rows never claim one-click resume or export support.
-- [ ] A blocked or rejected action has no side effect. Injected write/restart/verification failure restores projected credentials and config; an interrupted transaction blocks later mutations until explicit recovery succeeds. Native session state is never written by Mix.
-- [ ] Preview completes without reading the target credential. Credential fingerprint verification occurs only after final confirmation, and no system password prompt appears.
+- [ ] A blocked or rejected action has no side effect. Injected write/verification failure restores projected credentials and config; an interrupted transaction blocks later mutations until recovery succeeds. A launch failure retains the verified target and shows an actionable warning. Transcript bodies remain unchanged.
+- [ ] Browsing accounts never refreshes a target login or starts a switch. Selecting an account validates its identity before stopping the native client; no second confirmation or system password prompt appears.
 - [ ] An unsaved current login cannot be overwritten, a mismatched account fingerprint is rejected, and a newer saved credential generation is preserved.
 - [ ] The menu bar labels the already active account as **Open / 打开**, not as another switch. Selecting it activates a running client without restarting it, or opens it once when closed; it does not claim to create a new native session.
 

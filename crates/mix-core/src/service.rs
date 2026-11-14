@@ -278,25 +278,6 @@ impl MixService {
             let account = adapter.account_capability(client);
             let effective_active = adapter.observed_profile(client);
             let mut issues = Vec::new();
-            let recoverable_project_count = if client.adapter == AdapterKind::Codex
-                && account.available
-                && effective_active.is_some()
-            {
-                match crate::codex_desktop::recovery_count(&client.live_dir) {
-                    Ok(count) => {
-                        if count.is_some() {
-                            issues.push(ClientIssue::new(ClientIssueCode::CodexWorkspaceMissing));
-                        }
-                        count
-                    }
-                    Err(_) => {
-                        issues.push(ClientIssue::new(ClientIssueCode::CodexWorkspaceUnavailable));
-                        None
-                    }
-                }
-            } else {
-                None
-            };
             if client.profiles.is_empty() {
                 issues.push(ClientIssue::new(ClientIssueCode::NoProfiles));
             }
@@ -380,7 +361,6 @@ impl MixService {
                 command_found: executable.is_some(),
                 issues,
                 account_switch: account,
-                recoverable_project_count,
                 capabilities: adapter.capabilities(client, executable.is_some()),
                 import_files: adapter
                     .descriptor()
@@ -1089,9 +1069,7 @@ impl MixService {
             *stage = "synchronize_credentials";
             global_account.synchronize_credentials(client, self.vault.as_ref())?;
             let source = global_account.switch_source(client)?;
-            if source.as_deref() == Some(profile.as_str())
-                && !global_account.needs_workspace_repair(client, &target, self.vault.as_ref())?
-            {
+            if source.as_deref() == Some(profile.as_str()) {
                 *stage = "synchronize_current";
                 let synchronized =
                     global_account.synchronize_source(client, self.vault.as_ref())?;
@@ -1131,7 +1109,7 @@ impl MixService {
                 .as_ref()
                 .and_then(|name| client.profiles.get(name));
             *stage = "prepare_history";
-            let projection = global_account.switch_projection(client, &target, self.vault.as_ref())?;
+            let projection = global_account.switch_projection(client, &target)?;
             *stage = "prepare_transaction";
             let journal = SwitchJournal::prepare(
                 &config.root,
@@ -1173,11 +1151,7 @@ impl MixService {
             global_account.synchronize_target(client, &target, self.vault.as_ref())?;
             client.active_profile = Some(profile.clone());
             outcome = Some(SwitchOutcome {
-                status: if source.as_deref() == Some(profile.as_str()) {
-                    "workspace_restored"
-                } else {
-                    "switched"
-                }.into(),
+                status: "switched".into(),
                 app: app.into(),
                 from_profile: from_name,
                 to_profile: profile,
@@ -3609,20 +3583,15 @@ fn process_is_alive(_: u32) -> bool {
 fn lease_process_active(value: &str) -> Option<bool> {
     let mut lines = value.lines();
     let first = lines.next()?;
-    if first == "v2" {
-        let pid = lines.next()?.parse::<u32>().ok()?;
-        let start = lines.next()?.trim();
-        if start.is_empty() || lines.next().is_some() {
-            return None;
-        }
-        return Some(process_identity_matches(pid, start));
-    }
-    if lines.next().is_some() {
+    if first != "v2" {
         return None;
     }
-    // Keep leases written by the previous release alive until their process
-    // exits; deleting them during an upgrade could scrub a live session.
-    Some(first.parse::<u32>().ok().is_some_and(process_is_alive))
+    let pid = lines.next()?.parse::<u32>().ok()?;
+    let start = lines.next()?.trim();
+    if start.is_empty() || lines.next().is_some() {
+        return None;
+    }
+    Some(process_identity_matches(pid, start))
 }
 
 fn process_identity_matches(pid: u32, expected_start: &str) -> bool {
@@ -5312,7 +5281,7 @@ mod tests {
         let start = process_start_identity(pid).expect("current process start identity");
         assert!(lease_process_active(&format!("v2\n{pid}\n{start}\n")).unwrap_or(false));
         assert!(!lease_process_active(&format!("v2\n{pid}\n{start}-reused\n")).unwrap_or(true));
-        assert!(lease_process_active(&pid.to_string()).unwrap_or(false));
+        assert_eq!(lease_process_active(&pid.to_string()), None);
     }
 
     #[test]
@@ -5324,7 +5293,9 @@ mod tests {
         let leases = runtime.join(RUNTIME_LEASE_DIRECTORY);
         private_scoped_dir(&leases, &runtime_root).unwrap();
         let active_lease = leases.join(Uuid::new_v4().to_string());
-        fs::write(&active_lease, format!("{}\n", std::process::id())).unwrap();
+        let pid = std::process::id();
+        let start = process_start_identity(pid).expect("current process start identity");
+        fs::write(&active_lease, format!("v2\n{pid}\n{start}\n")).unwrap();
         let secret = runtime.join("auth.json");
         fs::write(&secret, b"secret").unwrap();
 
@@ -7875,72 +7846,6 @@ enabled = true
     }
 
     #[test]
-    fn codex_same_account_repair_restores_grouping_without_changing_login_or_history() {
-        let root = tempfile::tempdir().unwrap();
-        let live = root.path().join("codex");
-        fs::create_dir_all(live.join("sessions")).unwrap();
-        let auth = json!({"OPENAI_API_KEY":"fixture-key"});
-        fs::write(live.join("auth.json"), auth.to_string()).unwrap();
-        fs::write(live.join("config.toml"), "model = \"fixture\"\n").unwrap();
-        let transcript =
-            b"{\"type\":\"event_msg\",\"payload\":{\"message\":\"keep this conversation\"}}\n";
-        fs::write(live.join("sessions/rollout-example.jsonl"), transcript).unwrap();
-        let projects =
-            json!({"local-1":{"id":"local-1","name":"Example","rootPaths":["/example/repo"]}});
-        let assignments = json!({"thread-1":{"projectId":"local-1","projectKind":"local"}});
-        let state = json!({
-            "electron-account-renderer-state-v1": {"owner":null,"inactive":{"previous-owner":{
-                "atoms":{},"globals":{"local-projects":projects,"thread-project-assignments":assignments}
-            }}},
-            "electron-persisted-atom-state":{}
-        });
-        fs::write(live.join(crate::codex_desktop::STATE), state.to_string()).unwrap();
-        let service = MixService::with_vault(
-            root.path().join("mix/config.json"),
-            Arc::new(MemoryVault::default()),
-        )
-        .unwrap();
-        service.initialize().unwrap();
-        service
-            .register_client("codex", AdapterKind::Codex, live.clone())
-            .unwrap();
-        let captured = service
-            .capture_current_account("codex", None, None)
-            .unwrap();
-        let profile = captured["profile"].as_str().unwrap();
-        assert_eq!(
-            crate::codex_desktop::recovery_count(&live).unwrap(),
-            Some(1)
-        );
-
-        let outcome = service.switch("codex", profile).unwrap();
-        assert_eq!(outcome.status, "workspace_restored");
-        assert!(outcome.stopped_pids.is_empty());
-        assert!(!outcome.restarted);
-        let restored: Value =
-            serde_json::from_slice(&fs::read(live.join(crate::codex_desktop::STATE)).unwrap())
-                .unwrap();
-        assert_eq!(restored["local-projects"], projects);
-        assert_eq!(restored["thread-project-assignments"], assignments);
-        assert_eq!(
-            CodexAdapter::parse_auth(&live.join("auth.json")).unwrap(),
-            auth
-        );
-        assert_eq!(
-            fs::read(live.join("sessions/rollout-example.jsonl")).unwrap(),
-            transcript
-        );
-        assert_eq!(crate::codex_desktop::recovery_count(&live).unwrap(), None);
-        assert_eq!(
-            service.switch("codex", profile).unwrap().status,
-            "already_active"
-        );
-        assert!(SwitchJournal::load(service.store.root().unwrap())
-            .unwrap()
-            .is_none());
-    }
-
-    #[test]
     fn codex_switch_keeps_every_credential_and_provider_route_paired() {
         let cases = [
             (
@@ -8077,6 +7982,12 @@ enabled = true
                 .unwrap();
 
             let source_provider = provider_from_toml(&toml::from_str(source_config).unwrap()).id;
+            let desktop_state = json!({
+                "electron-renderer-content-owner":"example-owner",
+                "local-projects":{"example":{"id":"example","name":"Project","rootPaths":["/example/repo"]}},
+                "thread-project-assignments":{"example-thread":{"projectId":"example","projectKind":"local"}}
+            }).to_string();
+            fs::write(live.join(".codex-global-state.json"), &desktop_state).unwrap();
             fs::create_dir_all(live.join("sqlite")).unwrap();
             let rollout = live.join("sessions/rollout.jsonl");
             fs::create_dir_all(rollout.parent().unwrap()).unwrap();
@@ -8113,6 +8024,10 @@ enabled = true
 
             assert_eq!(outcome.status, "switched", "case: {name}");
             assert_eq!(
+                fs::read_to_string(live.join(".codex-global-state.json")).unwrap(),
+                desktop_state
+            );
+            assert_eq!(
                 crate::CodexAdapter::parse_auth(&live.join("auth.json")).unwrap(),
                 target_auth,
                 "credential mismatch in case: {name}",
@@ -8138,6 +8053,10 @@ enabled = true
             assert!(fs::read_to_string(&rollout).unwrap().ends_with(body));
             // A -> B -> A must restore account/route and preserve transcript bytes.
             service.switch("codex", "source").unwrap();
+            assert_eq!(
+                fs::read_to_string(live.join(".codex-global-state.json")).unwrap(),
+                desktop_state
+            );
             assert_eq!(
                 CodexAdapter::parse_auth(&live.join("auth.json")).unwrap(),
                 source_auth

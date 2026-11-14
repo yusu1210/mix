@@ -104,41 +104,36 @@ handling, backup, durable journal, verification, and rollback. For an
 environment-only client such as Claude Code, `use` only selects Mix's default
 isolated environment; it does not modify the client's native home or login.
 
+`--json` prints successful results to stdout. Runtime failures produce a JSON
+object with `error`, `code`, and `details` on stderr and exit with status 2.
+
 For a shell-script entry point, use `sh scripts/switch-codex.sh Personal`.
 It executes `mix use codex Personal`, with the same account labels, validation,
 transaction, and exit status as the CLI. Install Mix's CLI first, or set
 `MIX_BIN=/absolute/path/to/mix` to a binary built from this project. There is
 no Python runtime, external switching script, or second account registry.
-The experimental `--backend cc-switch` and `--script` options were removed.
 
 Before switching OAuth accounts, Mix selects the newest same-account credential
 and refreshes it, even if the access token has not expired. If it is rejected,
-Mix can try another matching credential before asking for sign-in. For the native Codex home,
-existing CC Switch database/sidecar credentials are optional read-only recovery
-sources. They are not required to install or use Mix. Only identity-checked,
-successfully refreshed credentials enter Mix; Provider routes and CC Switch's
-selection/settings are never copied or modified. API-key accounts do not use
-this recovery path. Network errors and rate limits do not trigger sign-in.
+Mix can try another matching credential from Mix or the native login before
+asking for sign-in. Mix does not read other account managers' storage. Only
+identity-checked, successfully refreshed credentials are saved, and Provider
+routes remain paired with their accounts. API-key accounts do not use this
+refresh path. Network errors and rate limits do not trigger sign-in.
 
 `run` creates a persistent project runtime and launches the selected client
 with `CODEX_HOME` or `CLAUDE_CONFIG_DIR`; different projects can run
 concurrently. Native session directories remain owned by Codex or Claude Code.
 
-When the requested Codex account is already active and its project catalog is
-intact, `use` does not rewrite configuration. It verifies the managed account and
+When the requested Codex account is already active, `use` does not rewrite
+configuration. It verifies the managed account and
 opens or activates the native client without restarting it. Human output says
 `Current account activated`; JSON retains the stable `already_active` status.
 
-Recent Codex desktop versions keep local project catalogs in account-scoped
-renderer state. Mix carries local project metadata and thread assignments
-through the same switch journal, including an empty catalog after the user
-deletes every project. If the active account's catalog is missing, the Mac App
-reports the recoverable project count and offers **Restore project grouping**.
-That action performs the normal same-account repair and reopens Codex. Mix does
-not move transcript bodies or transfer cloud-backed projects between accounts.
-The CLI performs the same repair with `mix use codex <current-account>` and
-returns `workspace_restored`. Wait for running tasks to finish before either
-repair action.
+Project grouping and desktop preferences are managed by Codex. Mix does not
+read or rewrite desktop global state, backups, or project checkpoints. Updating
+Codex's project format therefore does not require a Mix state migration. Use
+the current Codex release; older desktop project formats are not emulated.
 
 `sessions` prints each continuation locator as a resume id. `resume`
 re-enumerates the native catalog and launches the client's official resume

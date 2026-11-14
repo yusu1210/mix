@@ -5,6 +5,30 @@ All notable user-facing changes to Mix are documented here. Mix follows
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-11-14
+
+### Fixed
+
+- Codex account switching no longer depends on private desktop project schemas.
+  Desktop state, native backups, and project checkpoints are left untouched,
+  including after native upgrades, project edits, or deletions.
+- CLI runtime failures with `--json` return a structured error on stderr with
+  a nonzero exit status, so scripts can handle switching failures reliably.
+
+### Changed
+
+- Updated rustix to its memory-safety fix and replaced two withdrawn transitive
+  dependency versions.
+
+### Removed
+
+- Desktop project projection, checkpoint validation, and the project-repair UI.
+  The current Codex release manages shared project grouping natively.
+- Implicit credential recovery from other account managers' private storage.
+  Mix uses only its own saved accounts and the native client login.
+- Rewriting of obsolete executable paths, PID-only runtime lease parsing,
+  and unused projection/capability fields.
+
 ## [0.1.8] - 2026-11-09
 
 ### Added

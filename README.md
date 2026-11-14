@@ -85,12 +85,10 @@ Existing session bodies, IDs, and locations stay in their native Codex
 directories. A Provider transition may update only the minimal Provider
 metadata required by Codex, inside the same recoverable transaction.
 
-Recent Codex desktop versions isolate local project catalogs by login. Mix
-preserves that native project registry and local conversation grouping during
-account switches. If an upgrade has already hidden the groups for the active
-account, the Accounts page shows **Restore project grouping**; it reopens
-Codex after restoring the registry. Cloud-backed projects remain owned by
-their original account.
+Codex owns its project catalog and conversation grouping. Mix leaves desktop
+state and preferences untouched and does not keep a second project registry.
+Use the current Codex desktop release; Mix does not emulate older desktop
+project formats or transfer cloud-backed projects between accounts.
 
 ## CLI and Local Web
 

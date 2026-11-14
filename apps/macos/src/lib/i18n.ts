@@ -41,13 +41,6 @@ const zh = {
   workspaceAccountDifferent:
     "当前项目仍使用“{profile}”；全局切换不会改变项目绑定。",
   nativeHistoryKept: "原生目录保留",
-  restoreWorkspace: "恢复项目分组",
-  workspaceRestoring: "正在恢复…",
-  workspaceRecoveryDetail: "找到 {count} 个本地项目及会话分组。恢复会重新打开 Codex，请先等正在执行的任务结束。",
-  workspaceRestored: "项目分组已恢复，Codex 已重新打开",
-  workspaceRestoredOpenManually: "项目分组已恢复，请手动打开 Codex",
-  issueCodexWorkspaceMissing: "Codex 的本地项目分组尚未加载，可在账号页恢复。",
-  issueCodexWorkspaceUnavailable: "无法确认 Codex 项目状态的兼容性；请先保留当前状态并查看诊断。",
   switchCompleted: "切换完成；会话正文未被移动或改写",
   switchCompletedAndClientOpened:
     "切换完成，已重新打开客户端；原生会话仍保留",
@@ -59,7 +52,7 @@ const zh = {
   historyContinuityDetail:
     "Codex 切换时会保留本地项目和会话分组，并按需更新 Provider 元数据，失败可回滚。会话正文留在原生目录；云端项目仍属于原账号。",
   unsupportedAccountProfileDetail:
-    "该旧条目没有可验证账号身份，不能安全切换。请重新添加真实账号后移除此条目。",
+    "此账号没有可验证身份，不能安全切换。请重新添加真实账号后移除此条目。",
   enabled: "已开启",
   codexFileAuthReady: "Codex 文件登录已就绪",
   codexFileAuthRequired:
@@ -241,7 +234,7 @@ const zh = {
   issueRunCommandMissing: "尚未配置客户端启动命令。",
   issueRunCommandUnavailable: "找不到配置的客户端启动命令。",
   issueUnmanagedAccount: "客户端当前登录尚未添加到 Mix。",
-  issueUnsupportedAccountProfile: "存在无法验证身份的旧账号；请移除后通过原生登录重新添加。",
+  issueUnsupportedAccountProfile: "存在无法验证身份的账号；请移除后通过原生登录重新添加。",
   issueCredentialStoreUnavailable: "本地凭证目录当前不可用。",
   advanced: "高级设置",
   softwareUpdates: "软件更新",
@@ -521,13 +514,6 @@ const en: Record<keyof typeof zh, string> = {
   workspaceAccountDifferent:
     "This project still uses “{profile}”; global switching does not change project bindings.",
   nativeHistoryKept: "Native directory preserved",
-  restoreWorkspace: "Restore project grouping",
-  workspaceRestoring: "Restoring…",
-  workspaceRecoveryDetail: "Found {count} local projects and their conversation groups. Restoring reopens Codex; let any running tasks finish first.",
-  workspaceRestored: "Project grouping restored. Codex has reopened",
-  workspaceRestoredOpenManually: "Project grouping restored. Open Codex manually",
-  issueCodexWorkspaceMissing: "Codex has not loaded your local project groups. Restore them on the Accounts page.",
-  issueCodexWorkspaceUnavailable: "Codex workspace compatibility could not be verified. Keep the current state and check diagnostics before proceeding.",
   switchCompleted:
     "Switch complete; conversation bodies were neither moved nor rewritten",
   switchCompletedAndClientOpened:
@@ -541,7 +527,7 @@ const en: Record<keyof typeof zh, string> = {
   historyContinuityDetail:
     "Codex switches preserve local projects and conversation grouping and update Provider metadata when needed, with rollback on failure. Conversation bodies stay in the native directory; cloud projects remain with their original account.",
   unsupportedAccountProfileDetail:
-    "This legacy entry has no verifiable account identity and cannot switch safely. Add the real account again, then remove this entry.",
+    "This account has no verifiable identity and cannot switch safely. Add the real account again, then remove this entry.",
   enabled: "Enabled",
   codexFileAuthReady: "Codex file login ready",
   codexFileAuthRequired:
@@ -741,7 +727,7 @@ const en: Record<keyof typeof zh, string> = {
   issueRunCommandMissing: "The client launch command is not configured.",
   issueRunCommandUnavailable: "The configured client launch command is unavailable.",
   issueUnmanagedAccount: "The client's current login has not been added to Mix.",
-  issueUnsupportedAccountProfile: "An older account has no verifiable identity; remove it and add it again through native sign-in.",
+  issueUnsupportedAccountProfile: "An account has no verifiable identity; remove it and add it again through native sign-in.",
   issueCredentialStoreUnavailable: "The local credential directory is currently unavailable.",
   advanced: "Advanced settings",
   softwareUpdates: "Software updates",

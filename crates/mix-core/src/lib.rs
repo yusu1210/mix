@@ -1,6 +1,4 @@
 mod adapter;
-mod codex_desktop;
-mod credential_cache;
 mod error;
 mod fs;
 mod model;

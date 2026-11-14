@@ -39,10 +39,4 @@ for RUNNING_ROOT in "$TARGET_DIR" "$PROJECT_DIR/target"; do
 done
 rm -rf -- "$TARGET_DIR"
 
-# Older builds may have used Cargo's repository-local default before the
-# project moved its disposable target directory outside the checkout.
-if [ -d "$PROJECT_DIR/target" ] || [ -L "$PROJECT_DIR/target" ]; then
-  rm -rf -- "$PROJECT_DIR/target"
-fi
-
 printf '%s\n' "Cleaned Cargo build artifacts; source, app bundles, and local data were kept."

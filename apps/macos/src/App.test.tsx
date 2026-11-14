@@ -1329,7 +1329,7 @@ describe("Mix product shell", () => {
     expect((within(teamRow as HTMLElement).getByRole("button", { name: "切换到此账号" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("does not advertise an unverifiable legacy Codex profile as switchable", async () => {
+  it("does not advertise an unverifiable Codex profile as switchable", async () => {
     const configOnly = structuredClone(snapshot);
     configOnly.apps[0].account_switch = { available: false, status: "sign_in_required", storage: "default" };
     configOnly.apps[0].profiles.forEach((profile) => {
@@ -1353,7 +1353,7 @@ describe("Mix product shell", () => {
     const teamRow = screen.getAllByRole("article").find((row) => row.textContent?.includes("Team"));
     const switchEnvironment = within(teamRow as HTMLElement).getByRole("button", { name: "切换环境" }) as HTMLButtonElement;
     expect(switchEnvironment.disabled).toBe(true);
-    expect(switchEnvironment.title).toContain("没有可验证账号身份");
+    expect(switchEnvironment.title).toContain("没有可验证身份");
   });
 
   it("opens the requested account directly from the account card", async () => {
@@ -1620,29 +1620,6 @@ describe("Mix product shell", () => {
     expect((within(addDialog).getByRole("button", { name: "继续登录" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("offers one-click recovery when Codex lost local project grouping", async () => {
-    const missingProjects = structuredClone(snapshot);
-    missingProjects.apps[0].recoverable_project_count = 16;
-    mocks.request.mockImplementation(async (path: string, init?: RequestInit) => {
-      if (path === "/api/state") return structuredClone(missingProjects);
-      if (path === "/api/discovery") return [];
-      if (path.startsWith("/api/sessions")) return [];
-      if (path === "/api/switch") {
-        expect(JSON.parse(String(init?.body))).toEqual({ app: "codex", profile: "personal" });
-        return { status: "workspace_restored", restarted: true };
-      }
-      throw new Error(`Unexpected API path: ${path}`);
-    });
-
-    const user = userEvent.setup();
-    render(<App/>);
-    await waitForAccountsPage();
-    expect(screen.getByText(/找到 16 个本地项目及会话分组/)).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "恢复项目分组" }));
-    await waitFor(() => expect(mocks.request.mock.calls.some(([path]) => path === "/api/switch")).toBe(true));
-    expect(await screen.findByText("项目分组已恢复，Codex 已重新打开")).toBeTruthy();
-  });
-
   it("switches to English and keeps Local Web updates explicitly desktop-only", async () => {
     const user = userEvent.setup();
     const { container } = render(<App/>);
@@ -1760,9 +1737,9 @@ describe("Mix product shell", () => {
     const user = userEvent.setup();
     render(<App/>);
     await waitForAccountsPage();
-    expect(screen.getByText("存在无法验证身份的旧账号；请移除后通过原生登录重新添加。")).toBeTruthy();
+    expect(screen.getByText("存在无法验证身份的账号；请移除后通过原生登录重新添加。")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Switch to English" }));
-    expect(screen.getByText("An older account has no verifiable identity; remove it and add it again through native sign-in.")).toBeTruthy();
+    expect(screen.getByText("An account has no verifiable identity; remove it and add it again through native sign-in.")).toBeTruthy();
   });
 
   it("opens the command palette from the keyboard and restores focus on Escape", async () => {

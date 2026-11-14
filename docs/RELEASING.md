@@ -128,7 +128,7 @@ accepted asset set before the draft can become public.
    mkdir -p "$evidence_dir"
 
    cargo run --locked --package mix-release -- compatibility codex-provider-route \
-     --codex /Applications/ChatGPT.app/Contents/Resources/codex \
+     --codex /Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex \
      --output "$evidence_dir/client-compat-codex-provider.json"
 
    # Run the Claude probe only in a disposable operating-system user or machine.
@@ -206,7 +206,8 @@ written into artifacts, logs, command arguments, or repository files.
 
 RustSec maintenance and unsoundness warnings are reviewed explicitly; they are
 not hidden with blanket ignore rules. In the current lockfile, the GTK3,
-`glib`, and `proc-macro-error` warnings do not enter either macOS target graph.
+`glib`, `proc-macro-error`, and Linux D-Bus (`zbus_names`, `zvariant`,
+`zvariant_derive`) warnings do not enter either macOS target graph.
 Five unmaintained `unic-*` crates do enter both macOS graphs through Tauri's
 `tauri-utils -> urlpattern` chain; they have no known vulnerability, but remain
 an upstream maintenance risk. Do not add a local fork merely to silence that

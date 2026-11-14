@@ -117,8 +117,18 @@ enum Command {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+    let json = cli.json;
     if let Err(error) = run(cli).await {
-        eprintln!("{}: {}", error.code.as_str(), error);
+        if json {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "error": error.message, "code": error.code.as_str(), "details": error.details
+                })
+            );
+        } else {
+            eprintln!("{}: {}", error.code.as_str(), error);
+        }
         std::process::exit(2);
     }
 }
@@ -394,9 +404,7 @@ fn render_human(value: &serde_json::Value, output: HumanOutput) -> String {
         HumanOutput::Summary(heading) => render_summary(value, heading),
         HumanOutput::Use(ProfileCategory::Account) => render_summary(
             value,
-            if value["status"].as_str() == Some("workspace_restored") {
-                "Project grouping restored"
-            } else if value["status"].as_str() == Some("already_active") {
+            if value["status"].as_str() == Some("already_active") {
                 "Current account activated"
             } else {
                 "Account switched"
@@ -419,14 +427,6 @@ fn render_human(value: &serde_json::Value, output: HumanOutput) -> String {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("none");
                 lines.push(format!("  {name} · {status} · active: {active}"));
-                if let Some(count) = app
-                    .get("recoverable_project_count")
-                    .and_then(serde_json::Value::as_u64)
-                {
-                    lines.push(format!(
-                        "    project grouping needs restore · {count} local project(s)"
-                    ));
-                }
                 for profile in app["profiles"].as_array().into_iter().flatten() {
                     lines.push(format!(
                         "    {} ({})",

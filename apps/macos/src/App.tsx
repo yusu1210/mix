@@ -313,8 +313,6 @@ function issueLabel(issue: ClientIssue, t: Translate): string {
     unmanaged_account: "issueUnmanagedAccount",
     unsupported_account_profile: "issueUnsupportedAccountProfile",
     credential_store_unavailable: "issueCredentialStoreUnavailable",
-    codex_workspace_missing: "issueCodexWorkspaceMissing",
-    codex_workspace_unavailable: "issueCodexWorkspaceUnavailable",
   };
   const key = keys[issue.code];
   return key ? t(key) : t("unknownError");
@@ -1007,9 +1005,7 @@ export default function App() {
       const warning = result.restart_warning || result.activity_warning || result.warning;
       const client = snapshot.apps.find((item) => item.name === app);
       const environmentSelection = result.status === "selected" || result.status === "already_selected";
-      const completed = result.status === "workspace_restored"
-        ? t(result.restarted === false ? "workspaceRestoredOpenManually" : "workspaceRestored")
-        : environmentSelection
+      const completed = environmentSelection
         ? t("environmentSelected")
         : clientCapabilityAvailable(client, "process.control")
           ? t(result.status === "already_active" ? "clientOpened" : result.restarted === false ? "switchCompletedOpenManually" : "switchCompletedAndClientOpened")
@@ -1346,8 +1342,7 @@ function EnvironmentsView({ t, snapshot, canAddClient, busy, switchingTarget, on
       return <section className="account-client-section" key={app.name}>
         <header className="account-client-header"><ClientGlyph adapter={app.adapter} large/><div className="account-client-name"><div className="title-line"><h2>{adapterName(app.adapter)}</h2><StatusBadge status={app.status} t={t}/></div><span>{profileCountLabel}</span></div><div className="current-account-summary"><small>{t(currentIsAccount ? "activeAccount" : "activeEnvironment")}</small><strong>{currentLabel || t(accountLikeClient && app.account_switch?.status === "sign_in_required" ? "signedOut" : "setupRequired")}</strong><span>{currentDetail || t(accountLikeClient && app.account_switch?.status === "sign_in_required" ? "chooseSavedAccount" : "setupRequired")}</span></div><div className="account-trust"><span><Icon name="history"/>{t("nativeHistoryKept")}</span><span><Icon name="shield"/>{managedAccountCount > 0 ? (credentialStoreAvailable ? t("credentialStorageReady") : t("credentialStorageUnavailable")) : t("clientOwnedAuth")}</span></div><button className="button primary" disabled={busy} onClick={() => onAddProfile(app.name)}><Icon name="plus"/>{t(supportsManagedAccounts ? "addProfile" : "addEnvironment")}</button></header>
         {supportsManagedAccounts && (!accountSwitchReady || app.account_switch?.status === "sign_in_required") && <div className="inline-warning account-warning"><Icon name="warning"/><span>{capabilityDetail}</span><button className="button secondary small" disabled={busy} onClick={() => void onRefresh()}>{t("recheckAccountStatus")}</button></div>}
-        {app.recoverable_project_count !== undefined && active && <div className="inline-warning account-warning" role="status"><Icon name="history"/><span>{t("workspaceRecoveryDetail", { count: app.recoverable_project_count })}</span><button className="button secondary small" disabled={busy || !accountSwitchReady} onClick={() => onSwitch(app.name, active.name)}>{switchingTarget === `${app.name}/${active.name}` ? t("workspaceRestoring") : t("restoreWorkspace")}</button></div>}
-        {app.issues.filter((issue) => issue.code !== "no_profiles" && issue.code !== "codex_workspace_missing").length > 0 && <div className="inline-warning account-warning"><Icon name="warning"/><span>{issueLabel(app.issues.find((issue) => issue.code !== "no_profiles" && issue.code !== "codex_workspace_missing")!, t)}</span></div>}
+        {app.issues.filter((issue) => issue.code !== "no_profiles").length > 0 && <div className="inline-warning account-warning"><Icon name="warning"/><span>{issueLabel(app.issues.find((issue) => issue.code !== "no_profiles")!, t)}</span></div>}
         <div className="saved-accounts-head"><h3>{savedProfilesLabel}</h3><span>{profileCountLabel}</span></div>
         <div className="saved-account-list">{[...app.profiles].sort((left, right) => Number(right.name === app.active) - Number(left.name === app.active)).map((profile) => {
           const isCurrent = profile.name === app.active;

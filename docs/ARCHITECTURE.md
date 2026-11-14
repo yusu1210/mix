@@ -33,8 +33,8 @@ account/Provider overlay and composes it over the latest live user configuration
 at switch or isolated launch time. Provider selection, endpoints, compatible
 model settings, and the selected Provider definition follow the account; MCP
 servers, plugins, projects, features, notifications, personality, and other
-user preferences remain shared. Legacy full snapshots are read through the same
-overlay extractor, so they cannot restore stale shared settings. The resulting
+user preferences remain shared. Only account-specific keys can enter the
+overlay; unrelated settings cannot be restored from profile files. The resulting
 configuration is staged inside the switch journal before the live file changes.
 This follows Codex's documented base-plus-overlay configuration model while
 avoiding a hidden dependency on a CLI-only `--profile` selector.
@@ -79,15 +79,12 @@ not install SQLite or run a database service; Mix still stores its own state
 in JSON. Bundling avoids relying on the older SQLite shipped with some macOS
 versions when reading native database and WAL files.
 
-Recent Codex desktop builds also scope the renderer registry by the native
-OAuth owner. The Codex desktop adapter projects only local projects, their
-local thread assignments, ordering, roots, and local sidebar preferences into
-the target owner slot. It retains account-private atoms and cloud-backed
-projects in their original slot. A private checkpoint parks the native slots
-when the desktop is in API-key mode. The same journal covers the primary global
-state, its native backup, and the checkpoint. On an already active account,
-Mix can detect a missing catalog and run the same stopped-client transaction
-as a repair; it never mutates this state while Codex is running.
+Codex owns its desktop project catalog, thread assignments, ordering, and
+account-scoped preferences. Mix never reads, validates, snapshots, or rewrites
+`.codex-global-state.json`, its backup, or desktop workspace checkpoints.
+A missing, corrupt, or changed desktop schema cannot block an account switch.
+Native project migration and recovery belong to Codex. Mix has no project
+repair action or compatibility branch for obsolete desktop schemas.
 
 ## Project runtimes
 
@@ -193,15 +190,14 @@ profile, a credential-only match, or map order.
 
 Native Codex OAuth synchronization compares refresh time and token issue time;
 an equal timestamp does not imply an unchanged token. Before switching to a
-different OAuth identity, Core selects the newest matching login from Mix profiles,
-the native login, and (only for the default native home) optional CC Switch
-credential caches. Each candidate is validated, deduplicated by refresh token,
+different OAuth identity, Core selects the newest matching login from Mix
+profiles and the native login. Each candidate is validated, deduplicated by refresh token,
 and exchanged through the official OAuth endpoint before it is saved. An OAuth
 rejection may try another distinct matching credential; attempts are bounded and
 stop on network/rate-limit/server errors. This recovery never
-copies a Provider route or writes CC Switch data, and requires no external
-application or script. A successful rotation is shared with same-identity Mix
-profiles, not with unrelated accounts.
+copies a Provider route and never reads another account manager's storage.
+A successful rotation is shared with same-identity Mix profiles, not with
+unrelated accounts.
 
 Mac App, CLI, and Local Web use one cross-platform store under
 `~/.mix/credentials`. References are mapped to non-reversible SHA-256 filenames;
