@@ -5,6 +5,24 @@ All notable user-facing changes to Mix are documented here. Mix follows
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-11-16
+
+### Fixed
+
+- Codex history follows the selected Provider even when its metadata contains
+  trailing fields, escaped strings, or unrelated nested Provider fields.
+  Rebinding preserves all other transcript bytes and remains reversible.
+- Account capture retains a custom definition of the default `openai` Provider
+  when `model_provider` is omitted. Official account sign-in starts without
+  inheriting that custom route.
+- Blocking Core operations run outside the HTTP executor, so a state request
+  waiting for an account switch cannot freeze the local service.
+- An oversized session metadata record no longer hides subsequent valid sessions.
+- Switch transactions stage all target configuration files before application,
+  reject conflicting path mutations, and validate journals before persisting them.
+- Switching back from activity now reports post-switch warnings instead of
+  displaying unconditional success.
+
 ## [0.1.10] - 2026-11-16
 
 ### Fixed

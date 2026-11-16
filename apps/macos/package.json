@@ -1,7 +1,7 @@
 {
   "name": "mix-macos",
   "private": true,
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Shared React interface and Tauri shell for Mix",
   "license": "MIT",
   "engines": {

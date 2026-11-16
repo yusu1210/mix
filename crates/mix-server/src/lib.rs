@@ -331,15 +331,21 @@ async fn health() -> Json<Value> {
 }
 
 async fn state_snapshot(State(state): State<ServerState>) -> Result<Json<Value>, ApiError> {
-    Ok(Json(serde_json::to_value(state.service.state()?)?))
+    Ok(Json(serde_json::to_value(
+        blocking_operation(move || state.service.state()).await?,
+    )?))
 }
 
 async fn discovery(State(state): State<ServerState>) -> Result<Json<Value>, ApiError> {
-    Ok(Json(serde_json::to_value(state.service.discovery()?)?))
+    Ok(Json(serde_json::to_value(
+        blocking_operation(move || state.service.discovery()).await?,
+    )?))
 }
 
 async fn diagnostics(State(state): State<ServerState>) -> Result<Json<Value>, ApiError> {
-    Ok(Json(state.service.diagnostics()?))
+    Ok(Json(
+        blocking_operation(move || state.service.diagnostics()).await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -378,22 +384,27 @@ async fn sessions(
             .into());
         }
         return Ok(Json(serde_json::to_value(
-            state.service.project_sessions()?,
+            blocking_operation(move || state.service.project_sessions()).await?,
         )?));
     }
-    Ok(Json(serde_json::to_value(state.service.sessions(
-        query.app.as_deref(),
-        query.query.as_deref(),
-        query.adapter,
-        query.recovery.as_deref(),
-        query.limit,
-        query.offset,
-    )?)?))
+    Ok(Json(serde_json::to_value(
+        blocking_operation(move || {
+            state.service.sessions(
+                query.app.as_deref(),
+                query.query.as_deref(),
+                query.adapter,
+                query.recovery.as_deref(),
+                query.limit,
+                query.offset,
+            )
+        })
+        .await?,
+    )?))
 }
 
 async fn workspaces(State(state): State<ServerState>) -> Result<Json<Value>, ApiError> {
     Ok(Json(serde_json::to_value(
-        state.service.state()?.workspaces,
+        blocking_operation(move || Ok(state.service.state()?.workspaces)).await?,
     )?))
 }
 
@@ -465,9 +476,12 @@ async fn register_client(
     Ok((
         StatusCode::CREATED,
         Json(
-            state
-                .service
-                .register_client(&body.name, body.adapter, body.live_dir)?,
+            blocking_operation(move || {
+                state
+                    .service
+                    .register_client(&body.name, body.adapter, body.live_dir)
+            })
+            .await?,
         ),
     ))
 }
@@ -486,11 +500,16 @@ async fn capture_account(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     Ok((
         StatusCode::CREATED,
-        Json(state.service.capture_current_account(
-            &body.app,
-            body.name.as_deref(),
-            body.label.as_deref(),
-        )?),
+        Json(
+            blocking_operation(move || {
+                state.service.capture_current_account(
+                    &body.app,
+                    body.name.as_deref(),
+                    body.label.as_deref(),
+                )
+            })
+            .await?,
+        ),
     ))
 }
 
@@ -517,18 +536,23 @@ async fn add_profile(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     Ok((
         StatusCode::CREATED,
-        Json(state.service.add_profile(
-            &body.app,
-            body.name.as_deref(),
-            ProfileInput {
-                files: body.files,
-                secret_files: body.secret_files,
-                env: body.env,
-                secrets: body.secrets,
-                label: body.label,
-                auth_strategy: body.auth_strategy,
-            },
-        )?),
+        Json(
+            blocking_operation(move || {
+                state.service.add_profile(
+                    &body.app,
+                    body.name.as_deref(),
+                    ProfileInput {
+                        files: body.files,
+                        secret_files: body.secret_files,
+                        env: body.env,
+                        secrets: body.secrets,
+                        label: body.label,
+                        auth_strategy: body.auth_strategy,
+                    },
+                )
+            })
+            .await?,
+        ),
     ))
 }
 
@@ -547,12 +571,17 @@ async fn import_profile(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     Ok((
         StatusCode::CREATED,
-        Json(state.service.capture_profile(
-            &body.app,
-            body.name.as_deref(),
-            &body.files,
-            body.label.as_deref(),
-        )?),
+        Json(
+            blocking_operation(move || {
+                state.service.capture_profile(
+                    &body.app,
+                    body.name.as_deref(),
+                    &body.files,
+                    body.label.as_deref(),
+                )
+            })
+            .await?,
+        ),
     ))
 }
 
@@ -567,10 +596,14 @@ async fn enroll_account_request(
     State(state): State<ServerState>,
     Json(body): Json<EnrollmentBody>,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(state.service.start_account_enrollment(
-        &body.app,
-        body.repair_profile.as_deref(),
-    )?))
+    Ok(Json(
+        blocking_operation(move || {
+            state
+                .service
+                .start_account_enrollment(&body.app, body.repair_profile.as_deref())
+        })
+        .await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -583,7 +616,9 @@ async fn enroll_status(
     State(state): State<ServerState>,
     Query(query): Query<EnrollmentQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(state.service.account_enrollment_status(&query.id)?))
+    Ok(Json(
+        blocking_operation(move || state.service.account_enrollment_status(&query.id)).await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -598,9 +633,8 @@ async fn repair_account(
     Json(body): Json<RepairBody>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        state
-            .service
-            .repair_active_login(&body.app, &body.profile)?,
+        blocking_operation(move || state.service.repair_active_login(&body.app, &body.profile))
+            .await?,
     ))
 }
 
@@ -616,11 +650,14 @@ async fn run_client(
     State(state): State<ServerState>,
     Json(body): Json<RunBody>,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(state.service.run(
-        &body.app,
-        &body.profile,
-        body.cwd.as_deref(),
-    )?))
+    Ok(Json(
+        blocking_operation(move || {
+            state
+                .service
+                .run(&body.app, &body.profile, body.cwd.as_deref())
+        })
+        .await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -635,11 +672,14 @@ async fn edit_profile(
     State(state): State<ServerState>,
     Json(body): Json<EditProfileBody>,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(state.service.edit_profile(
-        &body.app,
-        &body.profile,
-        body.label.as_deref(),
-    )?))
+    Ok(Json(
+        blocking_operation(move || {
+            state
+                .service
+                .edit_profile(&body.app, &body.profile, body.label.as_deref())
+        })
+        .await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -655,11 +695,14 @@ async fn delete_profile(
     State(state): State<ServerState>,
     Json(body): Json<DeleteProfileBody>,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(state.service.delete_profile(
-        &body.app,
-        &body.profile,
-        body.detach_workspaces,
-    )?))
+    Ok(Json(
+        blocking_operation(move || {
+            state
+                .service
+                .delete_profile(&body.app, &body.profile, body.detach_workspaces)
+        })
+        .await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -678,9 +721,12 @@ async fn bind_workspace(
     Ok((
         StatusCode::CREATED,
         Json(
-            state
-                .service
-                .bind_workspace(body.path, body.bindings, body.name)?,
+            blocking_operation(move || {
+                state
+                    .service
+                    .bind_workspace(body.path, body.bindings, body.name)
+            })
+            .await?,
         ),
     ))
 }
@@ -695,7 +741,9 @@ async fn delete_workspace(
     State(state): State<ServerState>,
     Json(body): Json<WorkspaceDeleteBody>,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(state.service.delete_workspace(&body.workspace)?))
+    Ok(Json(
+        blocking_operation(move || state.service.delete_workspace(&body.workspace)).await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -710,7 +758,8 @@ async fn resume_session(
     Json(body): Json<ResumeBody>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        state.service.resume_session(&body.app, &body.resume_id)?,
+        blocking_operation(move || state.service.resume_session(&body.app, &body.resume_id))
+            .await?,
     ))
 }
 
@@ -726,7 +775,8 @@ async fn open_native(
     Json(body): Json<NativeOpenBody>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        state.service.open_native(&body.app, body.cwd.as_deref())?,
+        blocking_operation(move || state.service.open_native(&body.app, body.cwd.as_deref()))
+            .await?,
     ))
 }
 
@@ -742,6 +792,59 @@ mod tests {
     use axum::body::Body;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn a_state_request_waiting_for_a_switch_does_not_block_the_http_executor() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        };
+        use std::time::Duration;
+
+        let directory = tempfile::tempdir().unwrap();
+        let config = directory.path().join("config.json");
+        let service = Arc::new(MixService::new(&config).unwrap());
+        service.initialize().unwrap();
+        let held = Arc::new(AtomicBool::new(false));
+        let lock_held = held.clone();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            mix_core::ConfigStore::new(config)
+                .unwrap()
+                .mutate(|_| {
+                    lock_held.store(true, Ordering::SeqCst);
+                    ready_tx.send(()).unwrap();
+                    // Bound the test even if a handler blocks the executor.
+                    let _ = release_rx.recv_timeout(Duration::from_secs(3));
+                    lock_held.store(false, Ordering::SeqCst);
+                    Ok(())
+                })
+                .unwrap();
+        });
+        ready_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let app = router(service, "test-token".into(), None);
+        let request = |uri| {
+            Request::builder()
+                .uri(uri)
+                .header("x-mix-token", "test-token")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let (state, responsive) = tokio::join!(
+            biased;
+            app.clone().oneshot(request("/api/state")),
+            async {
+                let response = app.oneshot(request("/api/health")).await.unwrap();
+                let responsive = response.status() == StatusCode::OK && held.load(Ordering::SeqCst);
+                let _ = release_tx.send(());
+                responsive
+            }
+        );
+        writer.join().unwrap();
+        assert_eq!(state.unwrap().status(), StatusCode::OK);
+        assert!(responsive, "the HTTP executor was blocked by a config lock");
+    }
 
     #[tokio::test]
     async fn switch_worker_runs_outside_the_async_executor_and_preserves_errors() {

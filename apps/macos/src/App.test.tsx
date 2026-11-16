@@ -398,6 +398,27 @@ describe("Mix product shell", () => {
     ).toBeTruthy();
   });
 
+  it("shows a warning when switching back succeeds but the client cannot reopen", async () => {
+    const withActivity = structuredClone(snapshot);
+    withActivity.activity = [{ id: "switch-1", kind: "switch", app: "codex", from_profile: "team", to_profile: "personal" }];
+    mocks.request.mockImplementation(async (path: string) => {
+      if (path === "/api/state") return structuredClone(withActivity);
+      if (path === "/api/discovery") return [];
+      if (path.startsWith("/api/sessions")) return [];
+      if (path === "/api/activity/switch-back") return { status: "switched", warning: "open it manually" };
+      throw new Error(`Unexpected API path: ${path}`);
+    });
+    const user = userEvent.setup();
+    render(<App/>);
+    await waitForAccountsPage();
+    await user.click(screen.getByRole("button", { name: "设置" }));
+    await user.click(screen.getByRole("button", { name: "活动与恢复" }));
+    await user.click(screen.getByRole("button", { name: "切回" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "确认切回" }));
+    expect(await screen.findByText(/已切回并创建新备份 · 操作已生效，但需要处理/)).toBeTruthy();
+  });
+
   it("paginates the native catalog and searches beyond the first session page", async () => {
     const firstPage = Array.from({ length: 200 }, (_, index): Session => ({
       ...structuredClone(sessions[0]),

@@ -13,6 +13,9 @@ Mix has one domain implementation and one visual implementation:
 
 A CLI command, Local Web request, and Mac App action enter the same Rust service
 methods; there is no parallel switching implementation.
+HTTP handlers dispatch synchronous Core operations to blocking workers, including
+state and session reads. Waiting for a configuration lock does not occupy the
+HTTP executor.
 The project-owned shell entry point delegates only to Mix's CLI, never to a
 script installed by another application.
 
@@ -35,7 +38,10 @@ model settings, and the selected Provider definition follow the account; MCP
 servers, plugins, projects, features, notifications, personality, and other
 user preferences remain shared. Only account-specific keys can enter the
 overlay; unrelated settings cannot be restored from profile files. The resulting
-configuration is staged inside the switch journal before the live file changes.
+configuration is staged in the transaction backup directory before the live file
+changes, as are other target configuration files. A prepared transaction does
+not reread mutable profile files during application. Journals reject overlapping
+file, credential, and token mutations before any live state changes.
 This follows Codex's documented base-plus-overlay configuration model while
 avoiding a hidden dependency on a CLI-only `--profile` selector.
 Account capture and switch validation reject recognized literal

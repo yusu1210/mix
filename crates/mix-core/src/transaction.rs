@@ -110,11 +110,6 @@ impl SwitchJournal {
         let backup_dir = backup_dir(root, &id);
         private_scoped_dir(&backup_dir, &root.join("backups"))?;
 
-        let rewrite_names = plan
-            .file_rewrites
-            .iter()
-            .map(|rewrite| rewrite.relative.clone())
-            .collect::<BTreeSet<_>>();
         let file_names = plan
             .from
             .into_iter()
@@ -122,8 +117,6 @@ impl SwitchJournal {
             .chain(plan.to.files.keys())
             .chain(plan.file_overrides.keys())
             .chain(plan.file_removals.iter())
-            .chain(plan.file_rewrites.iter().map(|rewrite| &rewrite.relative))
-            .filter(|relative| !rewrite_names.contains(*relative))
             .cloned()
             .collect::<BTreeSet<_>>();
         let secret_names = plan
@@ -136,6 +129,14 @@ impl SwitchJournal {
 
         let mut backup_references = Vec::new();
         let result = (|| {
+            if !file_names.is_disjoint(&secret_names)
+                || plan.file_rewrites.iter().any(|rewrite| {
+                    file_names.contains(&rewrite.relative)
+                        || secret_names.contains(&rewrite.relative)
+                })
+            {
+                return Err(Error::invalid("a switch path has conflicting mutations"));
+            }
             let mut files = Vec::new();
             for relative in file_names {
                 let live = safe_child(plan.live_dir, &relative)?;
@@ -157,8 +158,12 @@ impl SwitchJournal {
                     let target = safe_child(&backup_dir, &format!("targets/{relative}"))?;
                     atomic_write(&target, payload)?;
                     Some(target)
+                } else if let Some(source) = plan.to.files.get(&relative) {
+                    let target = safe_child(&backup_dir, &format!("targets/{relative}"))?;
+                    atomic_copy(source, &target)?;
+                    Some(target)
                 } else {
-                    plan.to.files.get(&relative).cloned()
+                    None
                 };
                 files.push(FileMutation {
                     relative: relative.clone(),
@@ -233,10 +238,18 @@ impl SwitchJournal {
                 restart_required: plan.restart_required,
                 phase: JournalPhase::Prepared,
             };
+            validate_journal(root, &journal)?;
+            let mut payload = serde_json::to_vec_pretty(&journal)?;
+            payload.push(b'\n');
+            if payload.len() as u64 > MAX_LOCAL_JSON_BYTES {
+                return Err(Error::invalid(
+                    "the switch journal exceeds the recovery size limit",
+                ));
+            }
             let path = Self::path(root);
             let parent = path.parent().ok_or_else(invalid_journal)?;
             private_scoped_dir(parent, &root.join("transactions"))?;
-            if let Err(error) = atomic_json(&path, &journal) {
+            if let Err(error) = atomic_write(&path, &payload) {
                 let _ = journal.remove_backup_secrets(vault);
                 return Err(error);
             }
@@ -490,10 +503,14 @@ fn validate_journal(root: &Path, journal: &SwitchJournal) -> Result<()> {
             return Err(invalid_journal());
         }
         if let Some(path) = &mutation.target {
-            if !path.is_absolute() {
+            let expected = journal
+                .backup_dir(root)
+                .join("targets")
+                .join(&mutation.relative);
+            if *path != expected {
                 return Err(Error::new(
                     ErrorCode::MixSwitchRecoveryFailed,
-                    "the interrupted switch target is not absolute",
+                    "the interrupted switch target is outside its staged files",
                 ));
             }
         }
@@ -501,7 +518,7 @@ fn validate_journal(root: &Path, journal: &SwitchJournal) -> Result<()> {
     let mut secret_names = BTreeSet::new();
     for mutation in &journal.secrets {
         crate::fs::safe_relative(&mutation.relative).map_err(|_| invalid_journal())?;
-        if !secret_names.insert(&mutation.relative) {
+        if file_names.contains(&mutation.relative) || !secret_names.insert(&mutation.relative) {
             return Err(invalid_journal());
         }
     }
@@ -513,6 +530,8 @@ fn validate_journal(root: &Path, journal: &SwitchJournal) -> Result<()> {
             || rewrite.to.is_empty()
             || rewrite.to.len() > 256
             || rewrite.from == rewrite.to
+            || file_names.contains(&rewrite.relative)
+            || secret_names.contains(&rewrite.relative)
             || !rewrite_files.insert(rewrite.relative.clone())
         {
             return Err(invalid_journal());
@@ -987,20 +1006,61 @@ mod tests {
     }
 
     #[test]
-    fn prepared_switch_uses_its_staged_override_instead_of_a_mutable_profile_file() {
+    fn prepared_switch_freezes_files_with_and_without_an_override() {
+        for override_payload in [None, Some(b"effective-at-prepare".to_vec())] {
+            let root = tempfile::tempdir().unwrap();
+            let live = root.path().join("live");
+            fs::create_dir_all(&live).unwrap();
+            fs::write(live.join("config.toml"), b"old").unwrap();
+            let source = root.path().join("profile.toml");
+            fs::write(&source, b"profile-before").unwrap();
+            let vault = MemoryVault::default();
+            let target = Profile {
+                label: "new".into(),
+                files: BTreeMap::from([("config.toml".into(), source.clone())]),
+                ..Profile::default()
+            };
+            let expected = override_payload
+                .clone()
+                .unwrap_or_else(|| b"profile-before".to_vec());
+            SwitchJournal::prepare(
+                root.path(),
+                SwitchPlan {
+                    app: "codex",
+                    live_dir: &live,
+                    from_name: None,
+                    from: None,
+                    to_name: "new",
+                    to: &target,
+                    file_overrides: override_payload
+                        .into_iter()
+                        .map(|payload| ("config.toml".into(), payload))
+                        .collect(),
+                    file_removals: BTreeSet::new(),
+                    file_rewrites: Vec::new(),
+                    restart_required: false,
+                },
+                &vault,
+            )
+            .unwrap();
+            fs::remove_file(source).unwrap();
+            let journal = SwitchJournal::load(root.path()).unwrap().unwrap();
+            journal.apply(&vault).unwrap();
+            assert_eq!(fs::read(live.join("config.toml")).unwrap(), expected);
+            journal.finish_recovery(root.path(), &vault).unwrap();
+            assert_eq!(fs::read(live.join("config.toml")).unwrap(), b"old");
+        }
+    }
+
+    #[test]
+    fn conflicting_mutations_are_rejected_before_live_state_changes() {
         let root = tempfile::tempdir().unwrap();
         let live = root.path().join("live");
         fs::create_dir_all(&live).unwrap();
         fs::write(live.join("config.toml"), b"old").unwrap();
-        let source = root.path().join("profile.toml");
-        fs::write(&source, b"profile-before").unwrap();
         let vault = MemoryVault::default();
-        let target = Profile {
-            label: "new".into(),
-            files: BTreeMap::from([("config.toml".into(), source.clone())]),
-            ..Profile::default()
-        };
-        let journal = SwitchJournal::prepare(
+        let target = Profile::default();
+        let error = SwitchJournal::prepare(
             root.path(),
             SwitchPlan {
                 app: "codex",
@@ -1009,24 +1069,25 @@ mod tests {
                 from: None,
                 to_name: "new",
                 to: &target,
-                file_overrides: BTreeMap::from([(
-                    "config.toml".into(),
-                    b"effective-at-prepare".to_vec(),
-                )]),
-                file_removals: BTreeSet::new(),
-                file_rewrites: Vec::new(),
+                file_overrides: BTreeMap::new(),
+                file_removals: BTreeSet::from(["config.toml".into()]),
+                file_rewrites: vec![FileTokenRewrite {
+                    relative: "config.toml".into(),
+                    offset: 0,
+                    from: b"old".to_vec(),
+                    to: b"new".to_vec(),
+                }],
                 restart_required: false,
             },
             &vault,
         )
-        .unwrap();
-        fs::write(source, b"profile-after").unwrap();
-
-        journal.apply(&vault).unwrap();
-
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::MixValidationError);
+        assert_eq!(fs::read(live.join("config.toml")).unwrap(), b"old");
+        assert!(SwitchJournal::load(root.path()).unwrap().is_none());
         assert_eq!(
-            fs::read(live.join("config.toml")).unwrap(),
-            b"effective-at-prepare"
+            fs::read_dir(root.path().join("backups")).unwrap().count(),
+            0
         );
     }
 

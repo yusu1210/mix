@@ -997,21 +997,21 @@ fn codex_account_overlay(document: &toml::Table) -> toml::Table {
                 .map(|value| ((*key).to_owned(), value))
         })
         .collect::<toml::Table>();
-    if let Some(provider) = document
+    let provider = document
         .get("model_provider")
         .and_then(toml::Value::as_str)
-        .and_then(|provider| {
-            document
-                .get("model_providers")
-                .and_then(toml::Value::as_table)
-                .and_then(|providers| providers.get(provider))
-                .cloned()
-                .map(|definition| (provider.to_owned(), definition))
-        })
+        .unwrap_or("openai");
+    if let Some(definition) = document
+        .get("model_providers")
+        .and_then(toml::Value::as_table)
+        .and_then(|providers| providers.get(provider))
     {
         profile.insert(
             "model_providers".into(),
-            toml::Value::Table(toml::Table::from_iter([provider])),
+            toml::Value::Table(toml::Table::from_iter([(
+                provider.to_owned(),
+                definition.clone(),
+            )])),
         );
     }
     profile
@@ -1035,11 +1035,25 @@ pub(crate) fn codex_login_config(path: &Path) -> Result<String> {
     for key in CODEX_ACCOUNT_OVERLAY_KEYS {
         document.remove(*key);
     }
+    remove_codex_provider(&mut document, "openai");
     document.insert(
         "cli_auth_credentials_store".into(),
         toml::Value::String("file".into()),
     );
     encode_codex_config(&document)
+}
+
+fn remove_codex_provider(document: &mut toml::Table, provider: &str) {
+    let providers_empty = document
+        .get_mut("model_providers")
+        .and_then(toml::Value::as_table_mut)
+        .is_some_and(|providers| {
+            providers.remove(provider);
+            providers.is_empty()
+        });
+    if providers_empty {
+        document.remove("model_providers");
+    }
 }
 
 pub(crate) fn codex_materialized_config(
@@ -1067,16 +1081,7 @@ pub(crate) fn codex_materialized_config(
         .and_then(toml::Value::as_table)
         .is_some_and(|providers| providers.contains_key(&target_provider));
     if !target_defines_provider {
-        let providers_empty = document
-            .get_mut("model_providers")
-            .and_then(toml::Value::as_table_mut)
-            .is_some_and(|providers| {
-                providers.remove(&target_provider);
-                providers.is_empty()
-            });
-        if providers_empty {
-            document.remove("model_providers");
-        }
+        remove_codex_provider(&mut document, &target_provider);
     }
     for (key, value) in overlay {
         if key == "model_providers" {
@@ -1335,62 +1340,35 @@ fn read_first_line(path: &Path) -> Result<Vec<u8>> {
     Ok(line)
 }
 
-fn model_provider_token_offset(line: &[u8], expected: &str) -> Option<usize> {
-    let record: Value = serde_json::from_slice(trim_json_line(line)).ok()?;
-    let actual = record
-        .pointer("/payload/model_provider")
-        .and_then(Value::as_str)
-        .or_else(|| record.get("model_provider").and_then(Value::as_str))?;
-    if actual != expected {
+fn model_provider_token<'a>(line: &'a [u8], expected: &str) -> Option<(usize, &'a [u8])> {
+    #[derive(serde::Deserialize)]
+    struct Provider<'a> {
+        #[serde(borrow)]
+        model_provider: Option<&'a serde_json::value::RawValue>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Record<'a> {
+        #[serde(borrow)]
+        payload: Option<Provider<'a>>,
+        #[serde(borrow)]
+        model_provider: Option<&'a serde_json::value::RawValue>,
+    }
+
+    let record: Record<'_> = serde_json::from_slice(trim_json_line(line)).ok()?;
+    let token = record
+        .payload
+        .and_then(|payload| payload.model_provider)
+        .or(record.model_provider)?
+        .get();
+    if serde_json::from_str::<String>(token).ok()? != expected {
         return None;
     }
-    let needle = b"\"model_provider\"";
-    let mut search_from = 0;
-    let mut found = None;
-    while search_from + needle.len() <= line.len() {
-        let relative = line[search_from..]
-            .windows(needle.len())
-            .position(|window| window == needle)?;
-        let key_start = search_from + relative;
-        let mut cursor = key_start + needle.len();
-        while line.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-            cursor += 1;
-        }
-        if line.get(cursor) != Some(&b':') {
-            search_from = key_start + needle.len();
-            continue;
-        }
-        cursor += 1;
-        while line.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-            cursor += 1;
-        }
-        if line.get(cursor) != Some(&b'\"') {
-            search_from = key_start + needle.len();
-            continue;
-        }
-        let value_start = cursor + 1;
-        let mut end = value_start;
-        let mut escaped = false;
-        while let Some(byte) = line.get(end).copied() {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b'\"' {
-                let value = serde_json::from_slice::<String>(&line[cursor..=end]).ok()?;
-                if value == expected {
-                    if found.is_some() {
-                        return None;
-                    }
-                    found = Some(cursor);
-                }
-                break;
-            }
-            end += 1;
-        }
-        search_from = key_start + needle.len();
-    }
-    found
+    // RawValue borrows the exact JSON spelling, including escapes. Only this
+    // field is rewritten; all other metadata and conversation bytes stay intact.
+    Some((
+        token.as_ptr() as usize - line.as_ptr() as usize,
+        token.as_bytes(),
+    ))
 }
 
 fn codex_history_rollout_rewrites(
@@ -1482,7 +1460,7 @@ fn codex_history_rollout_rewrites(
         if current == target_provider {
             continue;
         }
-        let Some(offset) = model_provider_token_offset(&line, current) else {
+        let Some((offset, token)) = model_provider_token(&line, current) else {
             continue;
         };
         let key = (relative.to_owned(), offset as u64);
@@ -1492,7 +1470,7 @@ fn codex_history_rollout_rewrites(
         rewrites.push(FileTokenRewrite {
             relative: relative.to_owned(),
             offset: offset as u64,
-            from: serde_json::to_vec(current)?,
+            from: token.to_vec(),
             to: serde_json::to_vec(target_provider)?,
         });
     }
@@ -3000,10 +2978,10 @@ fn rollout_sessions(app: &str, client: &ClientConfig, query: Option<&str>) -> Re
         let Ok(first_bytes) = reader.by_ref().take(first_limit + 1).read_line(&mut first) else {
             continue;
         };
-        if first_bytes as u64 > first_limit {
-            break;
-        }
         scanned_bytes = scanned_bytes.saturating_add(first_bytes as u64);
+        if first_bytes as u64 > first_limit {
+            continue;
+        }
         let Ok(meta) = serde_json::from_str::<Value>(&first) else {
             continue;
         };
@@ -4235,7 +4213,9 @@ mod tests {
         fs::create_dir_all(live.join("sessions/2026/09/06")).unwrap();
         fs::write(live.join("config.toml"), "model_provider = \"openai\"\n").unwrap();
         let rollout = live.join("sessions/2026/09/06/rollout.jsonl");
-        let original = b"{\"type\":\"session_meta\",\"payload\":{\"model_provider\":\"openai\"}}\n{\"type\":\"event_msg\",\"payload\":{\"message\":\"preserved\"}}\n";
+        let original = br#"{"type":"session_meta","payload":{"model_provider":"op\u0065nai","nested":{"model_provider":"openai"},"cwd":"/example/project"}}
+{"type":"event_msg","payload":{"message":"preserved"}}
+"#;
         fs::write(&rollout, original).unwrap();
 
         let database = live.join("state_5.sqlite");
@@ -4290,7 +4270,7 @@ mod tests {
         assert!(projection.files.contains_key("config.toml"));
         assert!(projection.files.contains_key("state_5.sqlite"));
         assert_eq!(projection.rewrites.len(), 1);
-        assert_eq!(projection.rewrites[0].from, b"\"openai\"");
+        assert_eq!(projection.rewrites[0].from, br#""op\u0065nai""#);
         assert_eq!(projection.rewrites[0].to, b"\"enterprise-gateway\"");
 
         let journal = crate::transaction::SwitchJournal::prepare(
@@ -4331,6 +4311,9 @@ mod tests {
         assert!(String::from_utf8(switched.clone())
             .unwrap()
             .contains("enterprise-gateway"));
+        assert!(
+            String::from_utf8_lossy(&switched).contains(r#""nested":{"model_provider":"openai"}"#)
+        );
         assert!(switched
             .ends_with(b"{\"type\":\"event_msg\",\"payload\":{\"message\":\"preserved\"}}\n"));
 
@@ -4571,9 +4554,35 @@ mod tests {
     }
 
     #[test]
-    fn codex_history_skips_ambiguous_provider_offsets() {
-        let line = br#"{"type":"session_meta","payload":{"model_provider":"custom","nested":{"model_provider":"custom"}}}"#;
-        assert_eq!(model_provider_token_offset(line, "custom"), None);
+    fn codex_history_skips_duplicate_provider_fields() {
+        let line = br#"{"type":"session_meta","payload":{"model_provider":"custom","model_provider":"custom"}}"#;
+        assert_eq!(model_provider_token(line, "custom"), None);
+    }
+
+    #[test]
+    fn codex_history_finds_provider_before_trailing_metadata() {
+        let line = br#"{"type":"session_meta","payload":{"model_provider":"enterprise-gateway","cwd":"/example/project"}}"#;
+        assert!(model_provider_token(line, "enterprise-gateway").is_some());
+    }
+
+    #[test]
+    fn implicit_openai_definition_is_captured_but_never_inherited_by_login() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config.toml");
+        fs::write(&path, "[model_providers.openai]\nbase_url = \"https://gateway.example/v1\"\n[model_providers.other]\nbase_url = \"https://other.example/v1\"\n").unwrap();
+        let document = read_codex_config(&path).unwrap();
+        let captured = codex_account_overlay(&document);
+        assert_eq!(codex_route(&captured), codex_route(&document));
+        assert!(!captured["model_providers"]
+            .as_table()
+            .unwrap()
+            .contains_key("other"));
+        let login: toml::Table = toml::from_str(&codex_login_config(&path).unwrap()).unwrap();
+        assert!(provider_from_toml(&login).official);
+        assert!(login["model_providers"]
+            .as_table()
+            .unwrap()
+            .contains_key("other"));
     }
 
     #[test]
@@ -4990,6 +4999,12 @@ mod tests {
             b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"good\",\"cwd\":\"/tmp/project\",\"model_provider\":\"openai\"}}\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"Build Mix\"}}\n",
         )
         .unwrap();
+        let oversized = sessions.join("oversized.jsonl");
+        fs::write(&oversized, vec![b'x'; SESSION_META_BYTES as usize + 1]).unwrap();
+        fs::File::open(&oversized)
+            .unwrap()
+            .set_modified(SystemTime::now() + Duration::from_secs(60))
+            .unwrap();
         let client = ClientConfig {
             adapter: AdapterKind::Codex,
             live_dir: root.path().to_path_buf(),

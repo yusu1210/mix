@@ -8049,6 +8049,22 @@ enabled = true
                 "gateway-b",
             ),
             (
+                "official-to-implicit-default-gateway",
+                "model = \"official\"\n",
+                oauth("official-a"),
+                "[model_providers.openai]\nbase_url = \"https://default-gateway.example/v1\"\n",
+                json!({"OPENAI_API_KEY":"default-gateway-key"}),
+                "openai",
+            ),
+            (
+                "implicit-default-gateway-to-official",
+                "[model_providers.openai]\nbase_url = \"https://default-gateway.example/v1\"\n",
+                json!({"OPENAI_API_KEY":"default-gateway-key"}),
+                "model = \"official\"\n",
+                oauth("official-b"),
+                "openai",
+            ),
+            (
                 "shared-credential-different-route",
                 "model_provider = \"gateway-a\"\n[model_providers.gateway-a]\nbase_url = \"https://a.example/v1\"\n",
                 json!({"OPENAI_API_KEY":"shared-key"}),
@@ -8183,6 +8199,12 @@ enabled = true
             let outcome = service.switch("codex", "target").unwrap();
 
             assert_eq!(outcome.status, "switched", "case: {name}");
+            let live_config = crate::adapter::read_codex_config(&live.join("config.toml")).unwrap();
+            assert_eq!(
+                crate::adapter::codex_endpoint_host(&live_config),
+                crate::adapter::codex_endpoint_host(&toml::from_str(target_config).unwrap()),
+                "endpoint mismatch in case: {name}",
+            );
             assert_eq!(
                 fs::read_to_string(live.join(".codex-global-state.json")).unwrap(),
                 desktop_state
@@ -8213,6 +8235,12 @@ enabled = true
             assert!(fs::read_to_string(&rollout).unwrap().ends_with(body));
             // A -> B -> A must restore account/route and preserve transcript bytes.
             service.switch("codex", "source").unwrap();
+            let live_config = crate::adapter::read_codex_config(&live.join("config.toml")).unwrap();
+            assert_eq!(
+                crate::adapter::codex_endpoint_host(&live_config),
+                crate::adapter::codex_endpoint_host(&toml::from_str(source_config).unwrap()),
+                "restored endpoint mismatch in case: {name}",
+            );
             assert_eq!(
                 fs::read_to_string(live.join(".codex-global-state.json")).unwrap(),
                 desktop_state

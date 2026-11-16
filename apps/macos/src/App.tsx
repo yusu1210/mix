@@ -923,7 +923,7 @@ export default function App() {
       const result = await request<OperationResult>("/api/activity/switch-back", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ activity: activity.id }) });
       setDialog(null);
       await load(true);
-      const warning = result.restart_warning || result.activity_warning;
+      const warning = result.warning || result.restart_warning || result.activity_warning;
       notify(warning ? `${t("switchBackCompleted")} · ${t("operationCompletedWithWarning")}` : t("switchBackCompleted"), warning ? "warning" : "success");
     } catch (error) {
       notify(localizedFailureMessage(error, t, t("unknownError")), "error");
@@ -942,7 +942,7 @@ export default function App() {
       });
       setDialog(null);
       await load(true);
-      const warning = result.restart_warning || result.activity_warning;
+      const warning = result.warning || result.restart_warning || result.activity_warning;
       const cleanupCompleted = result.status === "cleanup_completed";
       notify(
         cleanupCompleted ? t("transactionCleanupCompleted") : warning ? `${t("interruptedSwitchRecovered")} · ${t("operationCompletedWithWarning")}` : t("interruptedSwitchRecovered"),
