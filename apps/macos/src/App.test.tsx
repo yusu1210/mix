@@ -1436,6 +1436,27 @@ describe("Mix product shell", () => {
     expect(mocks.request.mock.calls.some(([path]) => path === "/api/accounts/enroll")).toBe(false);
   });
 
+  it("keeps the requested account unchanged when another sign-in is pending", async () => {
+    mocks.request.mockImplementation(async (path: string) => {
+      if (path === "/api/state") return structuredClone(snapshot);
+      if (path === "/api/discovery") return [];
+      if (path.startsWith("/api/sessions")) return [];
+      if (path === "/api/switch") throw new ApiError("expired", "MIX_ACCOUNT_REAUTH_REQUIRED");
+      if (path === "/api/accounts/repair/active-login") throw new ApiError("different account", "MIX_ACCOUNT_LOCAL_REPAIR_UNAVAILABLE");
+      if (path === "/api/accounts/enroll") throw new ApiError("another sign-in", "MIX_ENROLLMENT_IN_PROGRESS");
+      throw new Error(`Unexpected API path: ${path}`);
+    });
+
+    render(<App/>);
+    await waitForAccountsPage();
+    const teamRow = screen.getAllByRole("article").find((row) => row.textContent?.includes("Team"));
+    fireEvent.click(within(teamRow as HTMLElement).getByRole("button", { name: "切换到此账号" }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveProperty("textContent", "另一个登录正在进行。请先完成或关闭已有登录窗口，再重试。"));
+    expect(mocks.request.mock.calls.filter(([path]) => path === "/api/switch")).toHaveLength(1);
+    expect(mocks.request.mock.calls.some(([path]) => path.startsWith("/api/accounts/enroll/status"))).toBe(false);
+  });
+
   it("keeps the current account and does not open login when refresh is temporarily unavailable", async () => {
     mocks.request.mockImplementation(async (path: string) => {
       if (path === "/api/state") return structuredClone(snapshot);

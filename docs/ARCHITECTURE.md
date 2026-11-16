@@ -191,11 +191,21 @@ profile, a credential-only match, or map order.
 Native Codex OAuth synchronization compares refresh time and token issue time;
 an equal timestamp does not imply an unchanged token. Before switching to a
 different OAuth identity, Core selects the newest matching login from Mix
-profiles and the native login. Each candidate is validated, deduplicated by refresh token,
-and exchanged through the official OAuth endpoint before it is saved. An OAuth
+profiles and the native login. Identity checks precede selection. A selected access
+token with a known expiry more than five minutes away is reused without an OAuth
+request. Switching accounts alone must not consume a single-use refresh token.
+If expiry is unknown or within five minutes, candidates are deduplicated by refresh
+token and exchanged through the official OAuth endpoint before saving. An OAuth
 rejection may try another distinct matching credential; attempts are bounded and
 stop on network/rate-limit/server errors. This recovery never
 copies a Provider route and never reads another account manager's storage.
+
+Login repair updates credentials and identity only. Saved account settings are
+captured separately from the live client, only when explicitly adding or
+synchronizing that current account. Enrollment reuses a pending operation only
+when both the client and add/repair target match; another target cannot inherit
+its completion. A completed or cancelled sign-in is finalized before the next
+operation is prepared.
 A successful rotation is shared with same-identity Mix profiles, not with
 unrelated accounts.
 

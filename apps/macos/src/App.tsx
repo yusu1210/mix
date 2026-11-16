@@ -349,6 +349,7 @@ function localizedFailureMessage(error: unknown, t: Translate, fallback: string)
       MIX_ACCOUNT_REFRESH_FAILED: "accountRefreshFailed",
       MIX_ACCOUNT_REAUTH_REQUIRED: "accountReauthRequired",
       MIX_ACCOUNT_LOCAL_REPAIR_UNAVAILABLE: "accountRepairFailed",
+      MIX_ENROLLMENT_IN_PROGRESS: "enrollmentInProgress",
       MIX_CODEX_FILE_AUTH_REQUIRED: "codexFileAuthRequired",
       MIX_CREDENTIAL_STORE_UNAVAILABLE: "credentialStoreUnavailableError",
       MIX_CREDENTIAL_NOT_FOUND: "accountCredentialInvalidError",

@@ -291,6 +291,7 @@ impl IntoResponse for ApiError {
             | ErrorCode::MixCredentialNotFound
             | ErrorCode::MixSessionUnavailable => StatusCode::NOT_FOUND,
             ErrorCode::MixConflict
+            | ErrorCode::MixEnrollmentInProgress
             | ErrorCode::MixSwitchRecoveryRequired
             | ErrorCode::MixSwitchRolledBack
             | ErrorCode::MixSwitchVerificationFailed

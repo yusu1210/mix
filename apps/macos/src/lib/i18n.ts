@@ -425,6 +425,7 @@ const zh = {
   continueToSignIn: "继续登录",
   enrollmentStarted: "已打开隔离的 Codex 登录窗口",
   enrollmentFailed: "另一个 Codex 账号没有添加成功",
+  enrollmentInProgress: "另一个登录正在进行。请先完成或关闭已有登录窗口，再重试。",
   enrollmentTimedOut: "登录等待超时；如果登录已完成，请刷新账号列表。",
   accountReauthRequired: "需要重新验证此账号",
   accountRefreshFailed:
@@ -931,6 +932,7 @@ const en: Record<keyof typeof zh, string> = {
   continueToSignIn: "Continue to sign in",
   enrollmentStarted: "Isolated Codex sign-in opened",
   enrollmentFailed: "The other Codex account could not be added",
+  enrollmentInProgress: "Another sign-in is in progress. Finish or close the existing sign-in window, then retry.",
   enrollmentTimedOut:
     "Sign-in timed out. If it completed, refresh the account list.",
   accountReauthRequired: "This account needs to be verified again",

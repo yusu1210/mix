@@ -558,12 +558,17 @@ impl MixService {
             let account = account_capture.capture_current(client)?;
             validate_captured_account(&account)?;
             if let Some(existing) = account_capture.matching_profile(client, &account)? {
-                account_capture.refresh_profile(
+                account_capture.refresh_credentials(
                     client,
                     &existing,
                     &account,
                     self.vault.as_ref(),
                 )?;
+                // Explicitly capturing the current account also saves its
+                // current settings. Login repair only updates credentials.
+                if let Some(projection) = adapter.global_account_projection() {
+                    projection.synchronize_source(client, self.vault.as_ref())?;
+                }
                 client.active_profile = Some(existing.clone());
                 captured = Some(json!({"status":"already_added","app":app,"profile":existing}));
                 return Ok(());
@@ -673,8 +678,27 @@ impl MixService {
             }
         }
         if let Some(record) = pending_enrollment(&config.root, app)? {
-            return Ok(enrollment_value(&record));
+            let status = self.enrollment_status(&record.id)?;
+            if status["state"] == "pending" {
+                if record.repair_profile.as_deref() != repair_profile {
+                    return Err(Error::new(
+                        ErrorCode::MixEnrollmentInProgress,
+                        "another sign-in is in progress; finish or close it before starting a different account operation",
+                    ));
+                }
+                return Ok(status);
+            }
+            if status["state"] == "completed" && record.repair_profile.as_deref() == repair_profile
+            {
+                return Ok(status);
+            }
         }
+        // Finishing an earlier enrollment may have added or updated profiles.
+        let config = self.store.load()?;
+        let client = config
+            .apps
+            .get(app)
+            .ok_or_else(|| Error::not_found("client", app))?;
         let executable = discover_executable(client).ok_or_else(|| {
             Error::new(ErrorCode::MixNotFound, "client executable is unavailable")
         })?;
@@ -758,6 +782,10 @@ impl MixService {
 
     pub fn account_enrollment_status(&self, id: &str) -> Result<Value> {
         let _guard = self.lock_mutation()?;
+        self.enrollment_status(id)
+    }
+
+    fn enrollment_status(&self, id: &str) -> Result<Value> {
         validate_identifier(id)?;
         let config = self.store.load()?;
         let mut record = read_enrollment(&config.root, id)?;
@@ -768,6 +796,7 @@ impl MixService {
             }
             return Ok(enrollment_value(&record));
         }
+        self.ensure_no_recovery_for(&config)?;
         if enrollment_expired(&record) {
             record.state = "failed".into();
             record.code = Some("MIX_ENROLLMENT_TIMEOUT".into());
@@ -998,7 +1027,7 @@ impl MixService {
                     "the saved account changed while its credential was refreshed",
                 ));
             }
-            account_capture.refresh_profile(client, profile, account, self.vault.as_ref())
+            account_capture.refresh_credentials(client, profile, account, self.vault.as_ref())
         })
     }
 
@@ -4053,7 +4082,7 @@ mod tests {
             }))
         }
 
-        fn refresh_profile(
+        fn refresh_credentials(
             &self,
             client: &mut ClientConfig,
             profile: &str,
@@ -4072,16 +4101,7 @@ mod tests {
                 .secret_files
                 .get("credential.bin")
                 .ok_or_else(|| Error::invalid("captured fixture credential is missing"))?;
-            let route = captured
-                .files
-                .get("route.txt")
-                .ok_or_else(|| Error::invalid("captured fixture route is missing"))?;
-            let route_source = target
-                .files
-                .get("route.txt")
-                .ok_or_else(|| Error::invalid("fixture route source is missing"))?;
             vault.set(reference, credential)?;
-            atomic_write(route_source, route)?;
             target.account_identity = Some(captured.identity.clone());
             Ok(())
         }
@@ -4145,6 +4165,22 @@ mod tests {
             client: &mut ClientConfig,
             _: &dyn CredentialVault,
         ) -> Result<Option<String>> {
+            if let Some(profile) = client
+                .active_profile
+                .as_ref()
+                .and_then(|name| client.profiles.get(name))
+            {
+                let saved = profile
+                    .files
+                    .get("route.txt")
+                    .ok_or_else(|| Error::invalid("fixture route is missing"))?;
+                let live = read_bounded(
+                    &client.live_dir.join("route.txt"),
+                    1024,
+                    "cannot read fixture route",
+                )?;
+                atomic_write(saved, &live)?;
+            }
             Ok(client.active_profile.clone())
         }
 
@@ -6393,81 +6429,193 @@ multi_agent = true
 
     #[test]
     fn enrolling_an_existing_account_refreshes_its_vault_credential() {
+        for repair in [false, true] {
+            for live_config in [
+                "model = \"other-account-model\"\n",
+                concat!(
+                    "model_provider = \"gateway\"\n",
+                    "[model_providers.gateway]\n",
+                    "base_url = \"https://gateway.example/v1\"\n",
+                ),
+            ] {
+                let root = tempfile::tempdir().unwrap();
+                let live = root.path().join("codex");
+                fs::create_dir_all(&live).unwrap();
+                fs::write(live.join("config.toml"), live_config).unwrap();
+                let live_auth = br#"{"OPENAI_API_KEY":"other-account-key"}"#;
+                fs::write(live.join("auth.json"), live_auth).unwrap();
+                let vault = Arc::new(MemoryVault::default());
+                let service =
+                    MixService::with_vault(root.path().join("mix/config.json"), vault.clone())
+                        .unwrap();
+                service.initialize().unwrap();
+                service
+                    .register_client("codex", AdapterKind::Codex, live.clone())
+                    .unwrap();
+                let document = json!({
+                    "auth_mode":"chatgpt",
+                    "email":"fixture-account@example.invalid",
+                    "tokens":{"account_id":"account-a","access_token":"fresh","refresh_token":"fresh-refresh"}
+                });
+                let fingerprint = crate::CodexAdapter::fingerprint(&document).unwrap();
+                let reference = SecretRef {
+                    service: "com.mix.test".into(),
+                    account: "account-a".into(),
+                };
+                let stored_config = root.path().join("stored-account.toml");
+                let saved_overlay = "model = \"target-account-model\"\n";
+                fs::write(&stored_config, saved_overlay).unwrap();
+                vault.set(&reference, b"stale").unwrap();
+                service
+                    .store
+                    .mutate(|config| {
+                        config.apps.get_mut("codex").unwrap().profiles.insert(
+                            "account-1".into(),
+                            Profile {
+                                label: "Account".into(),
+                                files: BTreeMap::from([(
+                                    "config.toml".into(),
+                                    stored_config.clone(),
+                                )]),
+                                secret_files: BTreeMap::from([(
+                                    "auth.json".into(),
+                                    reference.clone(),
+                                )]),
+                                account_fingerprint: Some(fingerprint),
+                                ..Profile::default()
+                            },
+                        );
+                        Ok(())
+                    })
+                    .unwrap();
+                let mix_root = service.store.root().unwrap();
+                let id = Uuid::new_v4().to_string();
+                let temp_dir = enrollment_directory(mix_root).join(&id);
+                private_scoped_dir(&temp_dir, &enrollment_directory(mix_root)).unwrap();
+                fs::write(
+                    temp_dir.join("auth.json"),
+                    serde_json::to_vec(&document).unwrap(),
+                )
+                .unwrap();
+                let record = EnrollmentRecord {
+                    version: ENROLLMENT_VERSION,
+                    id: id.clone(),
+                    app: "codex".into(),
+                    mode: if repair { "repair" } else { "add" }.into(),
+                    repair_profile: repair.then(|| "account-1".into()),
+                    temp_dir,
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    state: "pending".into(),
+                    profile: None,
+                    error: None,
+                    code: None,
+                };
+                write_enrollment(mix_root, &record).unwrap();
+
+                let status = service
+                    .start_account_enrollment("codex", repair.then_some("account-1"))
+                    .unwrap();
+                assert_eq!(status["state"], "completed");
+                assert_eq!(status["profile"], "account-1");
+                assert_eq!(fs::read_to_string(&stored_config).unwrap(), saved_overlay);
+                assert_eq!(
+                    fs::read_to_string(live.join("config.toml")).unwrap(),
+                    live_config
+                );
+                assert_eq!(fs::read(live.join("auth.json")).unwrap(), live_auth);
+                assert_eq!(
+                    serde_json::from_slice::<Value>(&vault.get(&reference).unwrap()).unwrap(),
+                    document
+                );
+                assert_eq!(
+                    service.store.load().unwrap().apps["codex"].profiles["account-1"]
+                        .account_identity
+                        .as_ref()
+                        .and_then(|identity| identity.email.as_deref()),
+                    Some("fixture-account@example.invalid")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn enrollment_reuses_only_the_same_requested_operation() {
         let root = tempfile::tempdir().unwrap();
         let live = root.path().join("codex");
         fs::create_dir_all(&live).unwrap();
-        let vault = Arc::new(MemoryVault::default());
-        let service =
-            MixService::with_vault(root.path().join("mix/config.json"), vault.clone()).unwrap();
+        fs::write(
+            live.join("auth.json"),
+            br#"{"OPENAI_API_KEY":"fixture-key"}"#,
+        )
+        .unwrap();
+        let service = service(root.path());
         service.initialize().unwrap();
         service
             .register_client("codex", AdapterKind::Codex, live)
             .unwrap();
-        let document = json!({
-            "email":"fresh@example.com",
-            "tokens":{"account_id":"account-a","access_token":"fresh"}
-        });
-        let fingerprint = crate::CodexAdapter::fingerprint(&document).unwrap();
-        let reference = SecretRef {
-            service: "com.mix.test".into(),
-            account: "account-a".into(),
-        };
-        let stored_config = root.path().join("stored-account.toml");
-        fs::write(&stored_config, "").unwrap();
-        vault.set(&reference, b"stale").unwrap();
         service
-            .store
-            .mutate(|config| {
-                config.apps.get_mut("codex").unwrap().profiles.insert(
-                    "account-1".into(),
-                    Profile {
-                        label: "Account".into(),
-                        files: BTreeMap::from([("config.toml".into(), stored_config.clone())]),
-                        secret_files: BTreeMap::from([("auth.json".into(), reference.clone())]),
-                        account_fingerprint: Some(fingerprint),
-                        ..Profile::default()
-                    },
-                );
-                Ok(())
-            })
+            .capture_current_account("codex", None, None)
             .unwrap();
         let mix_root = service.store.root().unwrap();
-        let id = Uuid::new_v4().to_string();
-        let temp_dir = enrollment_directory(mix_root).join(&id);
-        private_scoped_dir(&temp_dir, &enrollment_directory(mix_root)).unwrap();
-        fs::write(
-            temp_dir.join("auth.json"),
-            serde_json::to_vec(&document).unwrap(),
-        )
-        .unwrap();
-        let record = EnrollmentRecord {
-            version: ENROLLMENT_VERSION,
-            id: id.clone(),
-            app: "codex".into(),
-            mode: "add".into(),
-            repair_profile: None,
-            temp_dir,
-            created_at: chrono::Utc::now().to_rfc3339(),
-            state: "pending".into(),
-            profile: None,
-            error: None,
-            code: None,
-        };
-        write_enrollment(mix_root, &record).unwrap();
-
-        let status = service.account_enrollment_status(&id).unwrap();
-        assert_eq!(status["state"], "completed");
-        assert_eq!(
-            serde_json::from_slice::<Value>(&vault.get(&reference).unwrap()).unwrap(),
-            document
-        );
-        assert_eq!(
-            service.store.load().unwrap().apps["codex"].profiles["account-1"]
-                .account_identity
-                .as_ref()
-                .and_then(|identity| identity.email.as_deref()),
-            Some("fresh@example.com")
-        );
+        for existing_repair in [None, Some("account-1"), Some("deleted-account")] {
+            let id = Uuid::new_v4().to_string();
+            let temp_dir = enrollment_directory(mix_root).join(&id);
+            private_scoped_dir(&temp_dir, &enrollment_directory(mix_root)).unwrap();
+            let record = EnrollmentRecord {
+                version: ENROLLMENT_VERSION,
+                id: id.clone(),
+                app: "codex".into(),
+                mode: if existing_repair.is_some() {
+                    "repair"
+                } else {
+                    "add"
+                }
+                .into(),
+                repair_profile: existing_repair.map(str::to_owned),
+                temp_dir: temp_dir.clone(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                state: "pending".into(),
+                profile: None,
+                error: None,
+                code: None,
+            };
+            write_enrollment(mix_root, &record).unwrap();
+            for requested in [None, Some("account-1")] {
+                let result = service.start_account_enrollment("codex", requested);
+                if existing_repair == requested {
+                    assert_eq!(result.unwrap()["enrollment_id"], id);
+                } else {
+                    assert_eq!(result.unwrap_err().code, ErrorCode::MixEnrollmentInProgress);
+                }
+            }
+            // Closing an abandoned sign-in must unblock the next operation.
+            // A missing executable proves setup was reached without launching
+            // a real client or opening a browser in this test.
+            fs::write(temp_dir.join(".mix-login-exit"), b"1\n").unwrap();
+            service
+                .store
+                .mutate(|config| {
+                    config.apps.get_mut("codex").unwrap().run.command =
+                        vec![root.path().join("missing-codex").display().to_string()];
+                    Ok(())
+                })
+                .unwrap();
+            let next = if existing_repair.is_none() {
+                Some("account-1")
+            } else {
+                None
+            };
+            assert_eq!(
+                service
+                    .start_account_enrollment("codex", next)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::MixNotFound
+            );
+            assert_eq!(read_enrollment(mix_root, &id).unwrap().state, "failed");
+            assert!(!temp_dir.exists());
+            remove_enrollment(mix_root, &record).unwrap();
+        }
     }
 
     #[test]
@@ -6495,7 +6643,7 @@ base_url = "https://company-b.example"
         )
         .unwrap();
         let document = json!({
-            "email":"fresh@example.com",
+            "email":"fixture-account@example.invalid",
             "tokens":{"account_id":"account-a","access_token":"fresh"}
         });
         fs::write(
@@ -6571,7 +6719,7 @@ base_url = "https://company-b.example"
                 .account_identity
                 .as_ref()
                 .and_then(|identity| identity.email.as_deref()),
-            Some("fresh@example.com")
+            Some("fixture-account@example.invalid")
         );
         assert_eq!(profile.label, "Work");
         assert_eq!(profile.label_origin, ProfileLabelOrigin::User);
@@ -7847,19 +7995,31 @@ enabled = true
 
     #[test]
     fn codex_switch_keeps_every_credential_and_provider_route_paired() {
+        use base64::Engine as _;
+        let oauth = |account: &str| {
+            let claims = json!({"exp": chrono::Utc::now().timestamp() + 86400,
+                "https://api.openai.com/auth": {"chatgpt_account_id": account}});
+            let access = format!(
+                "e30.{}.signature",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .encode(serde_json::to_vec(&claims).unwrap())
+            );
+            json!({"auth_mode":"chatgpt", "last_refresh":chrono::Utc::now().to_rfc3339(),
+                "tokens":{"account_id":account,"access_token":access,"refresh_token":"already-consumed"}})
+        };
         let cases = [
             (
                 "official-to-official",
                 "model = \"official\"\n",
-                json!({"tokens":{"account_id":"official-a","access_token":"first-token"}}),
+                oauth("official-a"),
                 "model = \"official\"\n",
-                json!({"tokens":{"account_id":"official-b","access_token":"second-token"}}),
+                oauth("official-b"),
                 "openai",
             ),
             (
                 "official-to-custom",
                 "model = \"official\"\n",
-                json!({"tokens":{"account_id":"official-a","access_token":"official-token"}}),
+                oauth("official-a"),
                 "model_provider = \"gateway\"\n[model_providers.gateway]\nname = \"Gateway\"\nbase_url = \"https://gateway.example/v1\"\nwire_api = \"responses\"\n",
                 json!({"OPENAI_API_KEY":"gateway-key"}),
                 "gateway",
@@ -7867,7 +8027,7 @@ enabled = true
             (
                 "official-to-required-auth-gateway",
                 "model = \"official\"\n",
-                json!({"tokens":{"account_id":"official-a","access_token":"official-token"}}),
+                oauth("official-a"),
                 "model_provider = \"custom\"\n[model_providers.custom]\nname = \"Partner Gateway\"\nbase_url = \"https://partner-gateway.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
                 json!({"OPENAI_API_KEY":"partner-gateway-key"}),
                 "custom",
@@ -7877,7 +8037,7 @@ enabled = true
                 "model_provider = \"gateway\"\n[model_providers.gateway]\nname = \"Gateway\"\nbase_url = \"https://gateway.example/v1\"\nwire_api = \"responses\"\n",
                 json!({"OPENAI_API_KEY":"gateway-key"}),
                 "model = \"official\"\n",
-                json!({"tokens":{"account_id":"official-b","access_token":"official-token"}}),
+                oauth("official-b"),
                 "openai",
             ),
             (

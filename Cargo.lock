@@ -2408,8 +2408,9 @@ dependencies = [
 
 [[package]]
 name = "mix-cli"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
+ "base64 0.22.1",
  "clap",
  "mix-core",
  "mix-server",
@@ -2421,7 +2422,7 @@ dependencies = [
 
 [[package]]
 name = "mix-core"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2443,7 +2444,7 @@ dependencies = [
 
 [[package]]
 name = "mix-macos"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "base64 0.22.1",
  "minisign-verify",
@@ -2463,7 +2464,7 @@ dependencies = [
 
 [[package]]
 name = "mix-release"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2482,7 +2483,7 @@ dependencies = [
 
 [[package]]
 name = "mix-server"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "axum",
  "mix-core",

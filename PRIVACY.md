@@ -1,6 +1,6 @@
 # Mix Privacy / 隐私说明
 
-Effective date / 生效日期：2026-11-09
+Effective date / 生效日期：2026-11-16
 
 ## English
 
@@ -12,7 +12,7 @@ Mix can launch Codex and Claude Code. Those clients have their own network behav
 
 Codex owns its project grouping, desktop preferences, and native history. Mix does not read, back up, or rewrite Codex desktop project state. Account switching keeps native session files in place and only updates the client metadata required to pair the selected account with its Provider route.
 
-When switching to a different Codex OAuth account, Mix selects the newest matching credential saved in Mix or currently held by Codex and sends its refresh token to the official OpenAI authentication endpoint. If the token is rejected, Mix may validate another distinct credential for the same account through that endpoint. Credentials never go to Mix servers or unrelated Providers.
+When switching to a different Codex OAuth account, Mix selects the newest matching credential saved in Mix or currently held by Codex. If its access token expires more than five minutes later, Mix reuses it without an authentication request. Otherwise, including when expiry is unknown, Mix sends its refresh token to the official OpenAI authentication endpoint. If the token is rejected, Mix may validate another distinct credential for the same account through that endpoint. Credentials never go to Mix servers or unrelated Providers.
 
 Local and development builds do not contact an update service. A signed release build can check a configured HTTPS release endpoint at launch; users can change this to manual checks in Settings. The request is limited to ordinary update metadata such as Mix version, target platform, and architecture and does not include credentials, account labels, workspace paths, diagnostics, or transcripts. The endpoint host (initially GitHub) may receive normal network metadata such as IP address and request time under its own privacy terms. Downloads and installation always require an explicit user action.
 
@@ -34,7 +34,7 @@ Mix 可以启动 Codex 和 Claude Code；这些客户端有各自的联网行为
 
 Codex 负责项目分组、桌面偏好和原生历史。Mix 不读取、备份或改写 Codex 桌面项目状态。切换账号会保留原生会话文件，只更新将目标账号与其 Provider 路由配对所必需的客户端元数据。
 
-切换到不同的 Codex OAuth 账号时，Mix 先从 Mix 保存的凭证或 Codex 当前持有的凭证中选择同账号的最新凭证，再向 OpenAI 官方认证端点发送刷新令牌。令牌被拒绝后，Mix 可以通过该端点验证同账号的另一份不同凭证。凭证不会发送至 Mix 服务器或其他 Provider。
+切换到不同的 Codex OAuth 账号时，Mix 先从 Mix 保存的凭证或 Codex 当前持有的凭证中选择同账号的最新凭证。访问令牌距离到期超过 5 分钟时直接使用，不发起认证请求；临近到期或无法判断有效期时，才向 OpenAI 官方认证端点发送刷新令牌。令牌被拒绝后，Mix 可以通过该端点验证同账号的另一份不同凭证。凭证不会发送至 Mix 服务器或其他 Provider。
 
 本地和开发构建不会连接更新服务。签名正式版可在启动时访问配置的 HTTPS 发布端点检查更新，用户可在设置中改为手动检查。请求仅包含 Mix 版本、目标平台和架构等常规更新元数据，不包含凭证、账号标签、工作区路径、诊断信息或 transcript。端点提供方（初期为 GitHub）可能依据其隐私条款处理 IP 地址、请求时间等普通网络元数据。下载和安装始终需要用户明确操作。
 

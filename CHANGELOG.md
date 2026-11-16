@@ -5,6 +5,24 @@ All notable user-facing changes to Mix are documented here. Mix follows
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-11-16
+
+### Fixed
+
+- Codex switches reuse the newest matching OAuth login when its access token
+  has more than five minutes remaining. Switching no longer unnecessarily
+  consumes refresh tokens or rejects an otherwise usable login because its
+  refresh token was already rotated. Expired, nearly expired, or unknown
+  access-token lifetimes still require refresh before stopping the client.
+- Account and Provider round-trip regression tests now exercise actual OAuth
+  preparation, including a valid access token paired with a consumed refresh
+  token, while checking that native projects and conversations remain intact.
+- Isolated account sign-in and login repair update only the matching account's
+  credentials. They no longer read or copy another active account's settings.
+- Concurrent sign-ins only reuse the same add/repair operation. A different
+  request receives a clear message, and completed or closed sign-ins no longer
+  block a subsequent operation.
+
 ## [0.1.9] - 2026-11-14
 
 ### Fixed

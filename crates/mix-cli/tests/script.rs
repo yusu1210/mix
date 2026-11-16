@@ -5,6 +5,7 @@ use std::process::Command;
 
 #[test]
 fn script_switches_accounts_through_the_real_cli_and_preserves_history() {
+    use base64::Engine as _;
     use mix_core::{AdapterKind, MixService};
     use serde_json::{json, Value};
 
@@ -17,13 +18,24 @@ fn script_switches_accounts_through_the_real_cli_and_preserves_history() {
     service
         .register_client("codex", AdapterKind::Codex, live.clone())
         .unwrap();
-    for name in ["First", "Second"] {
+    let claims = json!({"exp":4102444800_i64,
+        "https://api.openai.com/auth":{"chatgpt_account_id":"fixture-account"}});
+    let access = format!(
+        "e30.{}.signature",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&claims).unwrap())
+    );
+    let logins = [
+        (
+            "First",
+            json!({"auth_mode":"chatgpt","tokens":{
+            "account_id":"fixture-account","access_token":access,"refresh_token":"already-consumed"}}),
+        ),
+        ("Second", json!({"OPENAI_API_KEY":"fixture-Second"})),
+    ];
+    for (name, auth) in &logins {
         std::fs::write(live.join("config.toml"), "model = \"test-model\"\n").unwrap();
-        std::fs::write(
-            live.join("auth.json"),
-            json!({"OPENAI_API_KEY": format!("fixture-{name}")}).to_string(),
-        )
-        .unwrap();
+        std::fs::write(live.join("auth.json"), auth.to_string()).unwrap();
         service
             .capture_current_account("codex", None, Some(name))
             .unwrap();
@@ -81,7 +93,10 @@ fn script_switches_accounts_through_the_real_cli_and_preserves_history() {
             assert_eq!(result["restarted"], false);
             let auth: Value =
                 serde_json::from_slice(&std::fs::read(live.join("auth.json")).unwrap()).unwrap();
-            assert_eq!(auth["OPENAI_API_KEY"], format!("fixture-{name}"));
+            assert_eq!(
+                &auth,
+                &logins.iter().find(|(label, _)| *label == name).unwrap().1
+            );
             assert_eq!(std::fs::read_to_string(&history).unwrap(), transcript);
             assert_eq!(
                 std::fs::read_to_string(&desktop).ok().as_deref(),

@@ -144,7 +144,8 @@ pub trait AccountCapture: Send + Sync {
         client: &ClientConfig,
         captured: &CapturedAccount,
     ) -> Result<Option<String>>;
-    fn refresh_profile(
+    /// Update the captured identity and credentials without changing its saved configuration.
+    fn refresh_credentials(
         &self,
         client: &mut ClientConfig,
         profile: &str,
@@ -744,7 +745,7 @@ impl AccountCapture for CodexAdapter {
         ))
     }
 
-    fn refresh_profile(
+    fn refresh_credentials(
         &self,
         client: &mut ClientConfig,
         profile: &str,
@@ -779,30 +780,7 @@ impl AccountCapture for CodexAdapter {
                 )
             })?
             .clone();
-        let captured_config = captured.files.get("config.toml").ok_or_else(|| {
-            Error::new(
-                ErrorCode::MixInternalError,
-                "captured Codex account has no configuration overlay",
-            )
-        })?;
-        let captured_config = std::str::from_utf8(captured_config)
-            .map_err(|_| Error::invalid("captured Codex configuration is not UTF-8"))?;
-        let captured_config = toml::from_str::<toml::Table>(captured_config)
-            .map_err(|_| Error::invalid("captured Codex configuration is invalid"))?;
-        let saved_config = client
-            .profiles
-            .get(profile)
-            .and_then(|profile| profile.files.get("config.toml"))
-            .ok_or_else(|| Error::invalid("saved Codex account has no configuration overlay"))?;
-        let saved_route = codex_route(&read_codex_config(saved_config)?);
-        let captured_route = codex_route(&captured_config);
         merge_codex_credential(vault, &reference, &captured.fingerprint, &document)?;
-        // A native login can change before its provider configuration (or vice
-        // versa). Refresh the matching credential, but never teach the saved
-        // account a different provider route from that transient pair.
-        if saved_route == captured_route {
-            sync_live_codex_overlay(client, profile)?;
-        }
         client
             .profiles
             .get_mut(profile)
@@ -903,7 +881,7 @@ impl GlobalAccountProjection for CodexAdapter {
         target: &Profile,
         vault: &dyn CredentialVault,
     ) -> Result<()> {
-        refresh_managed_codex_credential(client, target, vault)
+        prepare_managed_codex_credential(client, target, vault)
     }
 
     fn synchronize_source(
@@ -1678,7 +1656,7 @@ const CODEX_OAUTH_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_OAUTH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const CODEX_OAUTH_RESPONSE_BYTES: u64 = 64 * 1024;
 
-fn refresh_managed_codex_credential(
+fn prepare_managed_codex_credential(
     native: &ClientConfig,
     target: &Profile,
     vault: &dyn CredentialVault,
@@ -1709,7 +1687,7 @@ fn refresh_managed_codex_credential(
                 "Mix could not initialize secure Codex authentication",
             )
         })?;
-    refresh_managed_codex_credential_with(target, vault, &client, CODEX_OAUTH_TOKEN_URL, || {
+    prepare_managed_codex_credential_with(target, vault, &client, CODEX_OAUTH_TOKEN_URL, || {
         codex_credential_candidates(native, target, vault)
     })?;
     // One OAuth identity may have several Provider routes. A rotated token
@@ -1740,7 +1718,7 @@ fn synchronize_codex_identity(
     Ok(())
 }
 
-fn refresh_managed_codex_credential_with(
+fn prepare_managed_codex_credential_with(
     target: &Profile,
     vault: &dyn CredentialVault,
     client: &reqwest::blocking::Client,
@@ -1764,20 +1742,21 @@ fn refresh_managed_codex_credential_with(
         return Ok(());
     }
 
-    // Select the newest known generation before making any OAuth request.
-    // An unexpired access token does not prove that its refresh token is usable.
+    // Select the newest known generation before deciding whether an OAuth
+    // request is necessary. Switching accounts is not itself a reason to
+    // consume a single-use refresh token.
     let mut available = vec![document];
     available.extend(candidates());
-    let refreshed =
-        refresh_codex_from_candidates(client, endpoint, expected_fingerprint, available)?;
-    if CodexAdapter::fingerprint(&refreshed).as_deref() != Some(expected_fingerprint) {
+    let prepared =
+        prepare_codex_from_candidates(client, endpoint, expected_fingerprint, available)?;
+    if CodexAdapter::fingerprint(&prepared).as_deref() != Some(expected_fingerprint) {
         return Err(Error::new(
             ErrorCode::MixAccountReauthRequired,
-            "Codex refreshed a different account; the saved login was not changed",
+            "the prepared Codex login belongs to another account; the saved login was not changed",
         ));
     }
-    validate_codex_token_accounts(&refreshed)?;
-    vault.set(reference, &serde_json::to_vec(&refreshed)?)
+    validate_codex_token_accounts(&prepared)?;
+    vault.set(reference, &serde_json::to_vec(&prepared)?)
 }
 
 fn codex_credential_candidates(
@@ -1797,7 +1776,7 @@ fn codex_credential_candidates(
     candidates
 }
 
-fn refresh_codex_from_candidates(
+fn prepare_codex_from_candidates(
     client: &reqwest::blocking::Client,
     endpoint: &str,
     expected_fingerprint: &str,
@@ -1815,6 +1794,19 @@ fn refresh_codex_from_candidates(
             })
     });
     candidates.sort_by_key(|candidate| std::cmp::Reverse(codex_credential_order(candidate)));
+    if let Some(candidate) = candidates.first() {
+        let expires = candidate
+            .pointer("/tokens/access_token")
+            .and_then(Value::as_str)
+            .and_then(decode_jwt_claims)
+            .and_then(|claims| claims.get("exp").and_then(Value::as_i64));
+        // Match Codex's five-minute proactive refresh window. JWT claims here
+        // only schedule refresh; the service still authenticates the token.
+        // Missing/invalid expiry never grants this local fast path.
+        if expires.is_some_and(|expires| expires > chrono::Utc::now().timestamp() + 5 * 60) {
+            return Ok(candidate.clone());
+        }
+    }
     let mut attempted = HashSet::new();
     let mut failure = Error::new(
         ErrorCode::MixAccountReauthRequired,
@@ -3520,7 +3512,7 @@ mod tests {
     }
 
     #[test]
-    fn newest_login_is_refreshed_before_consumed_storage_even_with_unexpired_access() {
+    fn newest_unexpired_login_is_selected_without_consuming_its_refresh_token() {
         let mut saved = oauth_fixture("consumed");
         saved["tokens"]["access_token"] =
             test_jwt_with_expiration("example-account", chrono::Utc::now().timestamp() + 86400)
@@ -3528,11 +3520,9 @@ mod tests {
         let mut latest = saved.clone();
         latest["last_refresh"] = chrono::Utc::now().to_rfc3339().into();
         latest["tokens"]["refresh_token"] = "latest".into();
-        let (endpoint, server) = oauth_test_server(vec![(
-            "latest",
-            200,
-            serde_json::json!({"access_token":test_jwt("example-account"),"refresh_token":"rotated"}),
-        )]);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let endpoint = format!("http://{}/token", listener.local_addr().unwrap());
         let vault = crate::vault::MemoryVault::default();
         let reference = SecretRef {
             service: "test".into(),
@@ -3548,13 +3538,99 @@ mod tests {
         };
         let client = reqwest::blocking::Client::builder()
             .no_proxy()
+            .timeout(std::time::Duration::from_secs(2))
             .build()
             .unwrap();
-        refresh_managed_codex_credential_with(&target, &vault, &client, &endpoint, || vec![latest])
-            .unwrap();
-        server.join().unwrap();
+        prepare_managed_codex_credential_with(&target, &vault, &client, &endpoint, || {
+            vec![latest.clone()]
+        })
+        .unwrap();
         let stored: Value = serde_json::from_slice(&vault.get(&reference).unwrap()).unwrap();
-        assert_eq!(stored["tokens"]["refresh_token"], "rotated");
+        assert_eq!(stored, latest);
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn unexpired_login_with_a_consumed_refresh_token_switches_without_network() {
+        let mut original = oauth_fixture("already-consumed");
+        original["tokens"]["access_token"] =
+            test_jwt_with_expiration("example-account", chrono::Utc::now().timestamp() + 86400)
+                .into();
+        let fingerprint = CodexAdapter::fingerprint(&original).unwrap();
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap();
+        // No reachable endpoint: this must succeed without any HTTP request.
+        let selected = prepare_codex_from_candidates(
+            &client,
+            "http://127.0.0.1:0/token",
+            &fingerprint,
+            vec![original.clone()],
+        )
+        .unwrap();
+        assert_eq!(selected, original);
+    }
+
+    #[test]
+    fn expired_and_nearly_expired_logins_still_refresh() {
+        for remaining in [-1, 0, 299, 300] {
+            let mut original = oauth_fixture("needs-refresh");
+            original["tokens"]["access_token"] = test_jwt_with_expiration(
+                "example-account",
+                chrono::Utc::now().timestamp() + remaining,
+            )
+            .into();
+            let (endpoint, server) = oauth_test_server(vec![(
+                "needs-refresh",
+                200,
+                serde_json::json!({"access_token":test_jwt("example-account"),"refresh_token":"rotated"}),
+            )]);
+            let client = reqwest::blocking::Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap();
+            let selected = prepare_codex_from_candidates(
+                &client,
+                &endpoint,
+                &CodexAdapter::fingerprint(&original).unwrap(),
+                vec![original],
+            )
+            .unwrap();
+            server.join().unwrap();
+            assert_eq!(selected["tokens"]["refresh_token"], "rotated");
+        }
+    }
+
+    #[test]
+    fn newer_login_with_conflicting_identity_cannot_bypass_refresh_validation() {
+        let original = oauth_fixture("needs-refresh");
+        let mut conflicting = original.clone();
+        conflicting["last_refresh"] = chrono::Utc::now().to_rfc3339().into();
+        conflicting["tokens"]["access_token"] =
+            test_jwt_with_expiration("another-account", chrono::Utc::now().timestamp() + 86400)
+                .into();
+        let (endpoint, server) = oauth_test_server(vec![(
+            "needs-refresh",
+            200,
+            serde_json::json!({"access_token":test_jwt("example-account"),"refresh_token":"rotated"}),
+        )]);
+        let client = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap();
+        let selected = prepare_codex_from_candidates(
+            &client,
+            &endpoint,
+            &CodexAdapter::fingerprint(&original).unwrap(),
+            vec![original, conflicting],
+        )
+        .unwrap();
+        server.join().unwrap();
+        assert_eq!(selected["tokens"]["refresh_token"], "rotated");
     }
 
     #[test]
@@ -3649,7 +3725,7 @@ mod tests {
             .unwrap();
         let client = reqwest::blocking::Client::builder().build().unwrap();
 
-        let error = refresh_managed_codex_credential_with(
+        let error = prepare_managed_codex_credential_with(
             &profile,
             &vault,
             &client,
@@ -3768,7 +3844,7 @@ mod tests {
             .no_proxy()
             .build()
             .unwrap();
-        refresh_managed_codex_credential_with(&profile, &vault, &client, &endpoint, || {
+        prepare_managed_codex_credential_with(&profile, &vault, &client, &endpoint, || {
             vec![
                 original.clone(),
                 wrong_account,
@@ -3812,7 +3888,7 @@ mod tests {
             .build()
             .unwrap();
         let error =
-            refresh_managed_codex_credential_with(&profile, &vault, &client, &endpoint, || {
+            prepare_managed_codex_credential_with(&profile, &vault, &client, &endpoint, || {
                 vec![oauth_fixture("must-not-be-sent")]
             })
             .unwrap_err();
@@ -3885,7 +3961,7 @@ mod tests {
             profiles: BTreeMap::new(),
             run: crate::RunSpec::default(),
         };
-        refresh_managed_codex_credential(&native, &target, &vault).unwrap();
+        prepare_managed_codex_credential(&native, &target, &vault).unwrap();
         assert_eq!(vault.get(&reference).unwrap(), bytes);
         assert_eq!(std::fs::read(root.path().join("auth.json")).unwrap(), bytes);
     }
@@ -3981,7 +4057,7 @@ mod tests {
             .build()
             .unwrap();
         let error =
-            refresh_managed_codex_credential_with(&target, &vault, &client, &endpoint, || {
+            prepare_managed_codex_credential_with(&target, &vault, &client, &endpoint, || {
                 vec![original.clone(), alternative.clone(), alternative]
             })
             .unwrap_err();
